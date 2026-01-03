@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, 'claude/*']
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.2.app
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Cache DerivedData
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: ${{ runner.os }}-deriveddata-${{ hashFiles('**/*.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-deriveddata-
+
+      - name: Build for iOS Simulator
+        run: |
+          xcodebuild build \
+            -project Moshi.xcodeproj \
+            -scheme Moshi \
+            -destination 'platform=iOS Simulator,name=iPhone 15 Pro,OS=17.2' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty --color
+
+      - name: Run Tests
+        run: |
+          xcodebuild test \
+            -project Moshi.xcodeproj \
+            -scheme Moshi \
+            -destination 'platform=iOS Simulator,name=iPhone 15 Pro,OS=17.2' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            -resultBundlePath TestResults.xcresult \
+            | xcpretty --color --report junit --output test-results.xml
+        continue-on-error: true
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            TestResults.xcresult
+            test-results.xml
+
+  lint:
+    name: SwiftLint
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
+      - name: Run SwiftLint
+        run: swiftlint lint --reporter github-actions-logging Moshi/
+        continue-on-error: true
+
+  format-check:
+    name: Format Check
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install swift-format
+        run: brew install swift-format
+
+      - name: Check Formatting
+        run: |
+          swift-format lint --recursive Moshi/ --strict 2>&1 | head -50 || true
+        continue-on-error: true
+
+  archive:
+    name: Archive Build
+    runs-on: macos-14
+    needs: [build-and-test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.2.app
+
+      - name: Archive
+        run: |
+          xcodebuild archive \
+            -project Moshi.xcodeproj \
+            -scheme Moshi \
+            -destination 'generic/platform=iOS' \
+            -archivePath ./build/Moshi.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty --color
+        continue-on-error: true
+
+      - name: Upload Archive
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: Moshi-Archive
+          path: ./build/Moshi.xcarchive

@@ -1,0 +1,68 @@
+# SwiftLint Configuration for Moshi
+
+excluded:
+  - .build
+  - DerivedData
+  - Pods
+  - Carthage
+  - vendor
+
+disabled_rules:
+  - trailing_whitespace
+  - line_length
+  - identifier_name
+  - type_body_length
+  - file_length
+  - function_body_length
+  - cyclomatic_complexity
+  - nesting
+  - force_cast
+  - force_try
+  - force_unwrapping
+
+opt_in_rules:
+  - empty_count
+  - empty_string
+  - closure_spacing
+  - contains_over_first_not_nil
+  - convenience_type
+  - discouraged_optional_boolean
+  - explicit_init
+  - first_where
+  - modifier_order
+  - operator_usage_whitespace
+  - overridden_super_call
+  - redundant_nil_coalescing
+  - sorted_first_last
+  - toggle_bool
+  - unused_declaration
+  - vertical_whitespace_closing_braces
+  - yoda_condition
+
+# Configurable rules
+vertical_whitespace:
+  max_empty_lines: 2
+
+type_name:
+  min_length: 2
+  max_length: 50
+
+function_parameter_count:
+  warning: 6
+  error: 8
+
+large_tuple:
+  warning: 4
+  error: 6
+
+trailing_comma:
+  mandatory_comma: false
+
+# Custom rules can be added here
+custom_rules:
+  no_print_statements:
+    name: "No print() statements"
+    regex: '^\s*print\s*\('
+    message: "Use Logger instead of print()"
+    severity: warning
+    excluded: ".*Tests\\.swift"

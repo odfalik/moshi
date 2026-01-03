@@ -1,0 +1,58 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+xcuserdata/
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Packages/
+
+# CocoaPods
+Pods/
+Podfile.lock
+
+# Carthage
+Carthage/Build/
+
+# Generated files
+*.generated.swift
+*.pb.swift
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Testing
+TestResults.xcresult
+test-results.xml
+*.xcresult
+
+# Archives
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Sensitive files
+*.p12
+*.mobileprovision
+*.pem
+Secrets/
+
+# Temporary files
+*.log
+*.tmp

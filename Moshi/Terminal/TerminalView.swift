@@ -1,0 +1,377 @@
+import SwiftUI
+import Combine
+
+struct TerminalView: View {
+    @ObservedObject var session: Session
+    @EnvironmentObject var appSettings: AppSettings
+
+    @StateObject private var emulator = TerminalEmulator()
+    @State private var showingMacroKeyboard = true
+    @State private var showingTmuxBar = true
+    @State private var inputText = ""
+    @State private var keyboardHeight: CGFloat = 0
+
+    @FocusState private var isInputFocused: Bool
+
+    var body: some View {
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                // Tmux status bar
+                if showingTmuxBar, let tmuxSession = session.tmuxSession {
+                    TmuxStatusBar(session: session, tmuxSession: tmuxSession)
+                }
+
+                // Terminal content
+                TerminalRenderer(
+                    emulator: emulator,
+                    theme: appSettings.currentTheme,
+                    font: appSettings.terminalFont
+                )
+                .onTapGesture {
+                    isInputFocused = true
+                }
+                .gesture(
+                    DragGesture()
+                        .onEnded { value in
+                            handleSwipe(value)
+                        }
+                )
+
+                // Hidden text input for keyboard
+                HiddenInput(
+                    text: $inputText,
+                    isFocused: $isInputFocused,
+                    onSubmit: { sendInput() },
+                    onSpecialKey: { key in
+                        session.sendSpecialKey(key)
+                    }
+                )
+                .frame(height: 0)
+
+                // Macro keyboard bar
+                if showingMacroKeyboard {
+                    MacroKeyboard(session: session)
+                        .transition(.move(edge: .bottom))
+                }
+            }
+            .background(appSettings.currentTheme.swiftUIBackground)
+            .onChange(of: session.terminalOutput) { _, newOutput in
+                emulator.processOutput(newOutput)
+            }
+            .onAppear {
+                isInputFocused = true
+                updateTerminalSize(geometry.size)
+            }
+            .onChange(of: geometry.size) { _, newSize in
+                updateTerminalSize(newSize)
+            }
+            .toolbar {
+                terminalToolbar
+            }
+        }
+    }
+
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var terminalToolbar: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            ConnectionStatusView(state: session.state)
+        }
+
+        ToolbarItemGroup(placement: .primaryAction) {
+            Menu {
+                Button {
+                    session.splitTmuxPane(horizontal: true)
+                } label: {
+                    Label("Split Horizontal", systemImage: "square.split.2x1")
+                }
+
+                Button {
+                    session.splitTmuxPane(horizontal: false)
+                } label: {
+                    Label("Split Vertical", systemImage: "square.split.1x2")
+                }
+
+                Divider()
+
+                Button {
+                    Task { try? await session.createTmuxWindow() }
+                } label: {
+                    Label("New Window", systemImage: "plus.square")
+                }
+            } label: {
+                Image(systemName: "square.split.2x2")
+            }
+
+            Button {
+                showingMacroKeyboard.toggle()
+            } label: {
+                Image(systemName: showingMacroKeyboard ? "keyboard.fill" : "keyboard")
+            }
+
+            Menu {
+                Button {
+                    session.disconnect()
+                } label: {
+                    Label("Disconnect", systemImage: "xmark.circle")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+        }
+    }
+
+    // MARK: - Input Handling
+
+    private func sendInput() {
+        guard !inputText.isEmpty else { return }
+        session.sendInput(inputText)
+        inputText = ""
+    }
+
+    private func handleSwipe(_ gesture: DragGesture.Value) {
+        let horizontal = gesture.translation.width
+        let vertical = gesture.translation.height
+
+        if abs(horizontal) > abs(vertical) {
+            // Horizontal swipe - switch tmux windows
+            if horizontal > 50 {
+                session.sendCommand("tmux previous-window")
+            } else if horizontal < -50 {
+                session.sendCommand("tmux next-window")
+            }
+        } else {
+            // Vertical swipe - scroll
+            if vertical > 50 {
+                session.sendSpecialKey(.pageUp)
+            } else if vertical < -50 {
+                session.sendSpecialKey(.pageDown)
+            }
+        }
+    }
+
+    private func updateTerminalSize(_ size: CGSize) {
+        let font = appSettings.terminalFont.uiFont
+        let charWidth = font.monospacedDigitFontDescriptor?.postScriptName != nil
+            ? "W".size(withAttributes: [.font: font]).width
+            : font.pointSize * 0.6
+
+        let charHeight = font.lineHeight
+
+        let cols = max(1, Int(size.width / charWidth))
+        let rows = max(1, Int((size.height - (showingMacroKeyboard ? 50 : 0) - (showingTmuxBar ? 30 : 0)) / charHeight))
+
+        emulator.resize(cols: cols, rows: rows)
+        session.resize(cols: cols, rows: rows)
+    }
+}
+
+// MARK: - Connection Status View
+
+struct ConnectionStatusView: View {
+    let state: ConnectionState
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(state.color)
+                .frame(width: 8, height: 8)
+
+            if state.isConnecting {
+                ProgressView()
+                    .scaleEffect(0.7)
+            }
+
+            Text(state.displayName)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+    }
+}
+
+// MARK: - Tmux Status Bar
+
+struct TmuxStatusBar: View {
+    @ObservedObject var session: Session
+    let tmuxSession: TmuxSession
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 2) {
+                ForEach(tmuxSession.windows) { window in
+                    TmuxWindowTab(
+                        window: window,
+                        isActive: window.isActive
+                    ) {
+                        session.switchTmuxWindow(window.index)
+                    }
+                }
+
+                Button {
+                    Task { try? await session.createTmuxWindow() }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 8)
+        }
+        .frame(height: 30)
+        .background(Color(.systemGray6))
+    }
+}
+
+struct TmuxWindowTab: View {
+    let window: TmuxWindow
+    let isActive: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text("\(window.index)")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+
+                Text(window.name)
+                    .font(.caption)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(isActive ? Color.accentColor.opacity(0.2) : Color.clear)
+            .cornerRadius(4)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Hidden Input
+
+struct HiddenInput: UIViewRepresentable {
+    @Binding var text: String
+    @FocusState.Binding var isFocused: Bool
+    let onSubmit: () -> Void
+    let onSpecialKey: (SpecialKey) -> Void
+
+    func makeUIView(context: Context) -> UITextField {
+        let textField = TerminalTextField()
+        textField.delegate = context.coordinator
+        textField.autocapitalizationType = .none
+        textField.autocorrectionType = .no
+        textField.spellCheckingType = .no
+        textField.smartQuotesType = .no
+        textField.smartDashesType = .no
+        textField.smartInsertDeleteType = .no
+        textField.keyboardType = .asciiCapable
+        textField.returnKeyType = .default
+        textField.onSpecialKey = onSpecialKey
+        return textField
+    }
+
+    func updateUIView(_ uiView: UITextField, context: Context) {
+        uiView.text = text
+        if isFocused && !uiView.isFirstResponder {
+            uiView.becomeFirstResponder()
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, UITextFieldDelegate {
+        let parent: HiddenInput
+
+        init(_ parent: HiddenInput) {
+            self.parent = parent
+        }
+
+        func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
+            if !string.isEmpty {
+                parent.text = string
+                parent.onSubmit()
+                return false
+            }
+            return true
+        }
+
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            parent.onSpecialKey(.ctrlC) // Enter sends newline
+            return false
+        }
+    }
+}
+
+class TerminalTextField: UITextField {
+    var onSpecialKey: ((SpecialKey) -> Void)?
+
+    override var keyCommands: [UIKeyCommand]? {
+        var commands: [UIKeyCommand] = []
+
+        // Control key combinations
+        for char in "abcdefghijklmnopqrstuvwxyz" {
+            commands.append(
+                UIKeyCommand(
+                    input: String(char),
+                    modifierFlags: .control,
+                    action: #selector(handleControlKey(_:))
+                )
+            )
+        }
+
+        // Arrow keys
+        commands.append(contentsOf: [
+            UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: [], action: #selector(handleArrowKey(_:))),
+            UIKeyCommand(input: UIKeyCommand.inputDownArrow, modifierFlags: [], action: #selector(handleArrowKey(_:))),
+            UIKeyCommand(input: UIKeyCommand.inputLeftArrow, modifierFlags: [], action: #selector(handleArrowKey(_:))),
+            UIKeyCommand(input: UIKeyCommand.inputRightArrow, modifierFlags: [], action: #selector(handleArrowKey(_:))),
+        ])
+
+        // Function keys
+        commands.append(UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(handleEscape)))
+
+        return commands
+    }
+
+    @objc private func handleControlKey(_ command: UIKeyCommand) {
+        guard let input = command.input?.lowercased().first else { return }
+
+        switch input {
+        case "c": onSpecialKey?(.ctrlC)
+        case "d": onSpecialKey?(.ctrlD)
+        case "z": onSpecialKey?(.ctrlZ)
+        case "l": onSpecialKey?(.ctrlL)
+        default:
+            // Send raw control character
+            let controlChar = String(UnicodeScalar(UInt8(input.asciiValue! - 96)))
+            // Handle through normal input
+            break
+        }
+    }
+
+    @objc private func handleArrowKey(_ command: UIKeyCommand) {
+        switch command.input {
+        case UIKeyCommand.inputUpArrow: onSpecialKey?(.up)
+        case UIKeyCommand.inputDownArrow: onSpecialKey?(.down)
+        case UIKeyCommand.inputLeftArrow: onSpecialKey?(.left)
+        case UIKeyCommand.inputRightArrow: onSpecialKey?(.right)
+        default: break
+        }
+    }
+
+    @objc private func handleEscape() {
+        onSpecialKey?(.escape)
+    }
+}
+
+#Preview {
+    NavigationStack {
+        TerminalView(session: Session(host: Host(name: "Test", hostname: "localhost", username: "user")))
+            .environmentObject(AppSettings.shared)
+    }
+}

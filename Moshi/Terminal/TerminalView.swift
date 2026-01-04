@@ -10,6 +10,7 @@ struct TerminalView: View {
     @State private var showingTmuxBar = true
     @State private var inputText = ""
     @State private var keyboardHeight: CGFloat = 0
+    @State private var lastProcessedLength: Int = 0
 
     @FocusState private var isInputFocused: Bool
 
@@ -58,7 +59,13 @@ struct TerminalView: View {
             }
             .background(appSettings.currentTheme.swiftUIBackground)
             .onChange(of: session.terminalOutput) { _, newOutput in
-                emulator.processOutput(newOutput)
+                // Only process new content, not the entire buffer
+                if newOutput.count > lastProcessedLength {
+                    let startIndex = newOutput.index(newOutput.startIndex, offsetBy: lastProcessedLength)
+                    let newContent = String(newOutput[startIndex...])
+                    emulator.processOutput(newContent)
+                    lastProcessedLength = newOutput.count
+                }
             }
             .onAppear {
                 isInputFocused = true
@@ -66,6 +73,16 @@ struct TerminalView: View {
             }
             .onChange(of: geometry.size) { _, newSize in
                 updateTerminalSize(newSize)
+            }
+            .onChange(of: session.state) { _, newState in
+                // Re-send terminal size when connection is established
+                if case .connected = newState {
+                    Logger.terminal.debug("Connection established, re-sending terminal size")
+                    // Small delay to ensure shell is ready
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        updateTerminalSize(geometry.size)
+                    }
+                }
             }
             .toolbar {
                 terminalToolbar
@@ -149,13 +166,23 @@ struct TerminalView: View {
 
     private func updateTerminalSize(_ size: CGSize) {
         let font = appSettings.terminalFont.uiFont
-        // Calculate character width for monospaced font
-        let charWidth = "W".size(withAttributes: [.font: font]).width
-
+        // Calculate character width for monospaced font using a standard character
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        let charWidth = "M".size(withAttributes: attributes).width
         let charHeight = font.lineHeight
 
-        let cols = max(1, Int(size.width / charWidth))
-        let rows = max(1, Int((size.height - (showingMacroKeyboard ? 50 : 0) - (showingTmuxBar ? 30 : 0)) / charHeight))
+        // Account for safe areas and UI elements
+        let macroKeyboardHeight: CGFloat = showingMacroKeyboard ? 120 : 0  // Increased from 50
+        let tmuxBarHeight: CGFloat = showingTmuxBar ? 30 : 0
+        let toolbarHeight: CGFloat = 44  // Navigation bar
+
+        let availableWidth = size.width - 8  // Small horizontal padding
+        let availableHeight = size.height - macroKeyboardHeight - tmuxBarHeight - toolbarHeight
+
+        let cols = max(20, Int(availableWidth / charWidth))
+        let rows = max(5, Int(availableHeight / charHeight))
+
+        Logger.terminal.debug("Terminal size: \(cols)x\(rows) (width: \(size.width), charWidth: \(charWidth))")
 
         emulator.resize(cols: cols, rows: rows)
         session.resize(cols: cols, rows: rows)

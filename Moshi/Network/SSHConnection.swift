@@ -244,14 +244,21 @@ final class SSHConnection: @unchecked Sendable {
         self.cols = cols
         self.rows = rows
 
+        Logger.network.info("Resize requested: \(cols)x\(rows), stdinWriter: \(stdinWriter != nil ? "ready" : "nil")")
+
         Task {
             do {
-                try await stdinWriter?.changeSize(
-                    cols: cols,
-                    rows: rows,
-                    pixelWidth: 0,
-                    pixelHeight: 0
-                )
+                if let writer = stdinWriter {
+                    try await writer.changeSize(
+                        cols: cols,
+                        rows: rows,
+                        pixelWidth: 0,
+                        pixelHeight: 0
+                    )
+                    Logger.network.info("Resize sent successfully: \(cols)x\(rows)")
+                } else {
+                    Logger.network.warning("Cannot resize: stdinWriter not ready yet")
+                }
             } catch {
                 Logger.network.error("Failed to resize: \(error.localizedDescription)")
             }

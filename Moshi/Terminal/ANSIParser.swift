@@ -54,13 +54,16 @@ final class ANSIParser {
             }
         }
 
-        for char in input {
+        // Iterate over unicode scalars to ensure CR and LF are handled separately
+        // (Swift's Character iteration can combine \r\n into a single grapheme)
+        for scalar in input.unicodeScalars {
+            let char = Character(scalar)
             switch state {
             case .ground:
-                if char == "\u{1B}" { // ESC
+                if scalar.value == 0x1B { // ESC
                     flushText()
                     state = .escape
-                } else if char.isControlCharacter {
+                } else if scalar.value < 32 || scalar.value == 127 { // Control character
                     flushText()
                     tokens.append(.controlChar(char))
                 } else {
@@ -100,7 +103,13 @@ final class ANSIParser {
                     state = .ground
 
                 default:
+                    // Unknown escape sequence - go back to ground and re-process this character
                     state = .ground
+                    if char.isControlCharacter {
+                        tokens.append(.controlChar(char))
+                    } else {
+                        textBuffer.append(char)
+                    }
                 }
 
             case .csi:
@@ -122,19 +131,34 @@ final class ANSIParser {
                 if char == ";" {
                     state = .oscString
                 } else if char.isNumber {
-                    // OSC command number
-                } else if char == "\u{07}" || char == "\u{1B}" { // BEL or ESC
+                    // OSC command number - continue collecting
+                } else if char == "\u{07}" { // BEL terminates OSC
                     state = .ground
+                } else if char == "\u{1B}" { // ESC might be start of ST (ESC \)
+                    state = .ground
+                } else if char.isControlCharacter {
+                    // Control char terminates OSC and should be processed
+                    state = .ground
+                    tokens.append(.controlChar(char))
+                } else {
+                    // Other characters - treat as part of OSC string or abort
+                    state = .oscString
+                    oscString.append(char)
                 }
 
             case .oscString:
-                if char == "\u{07}" { // BEL
+                if char == "\u{07}" { // BEL terminates
                     tokens.append(.escape(.setTitle(oscString)))
                     state = .ground
                 } else if char == "\u{1B}" {
-                    // Could be ST (ESC \)
+                    // Could be ST (ESC \) - terminate OSC
+                    tokens.append(.escape(.setTitle(oscString)))
+                    state = .escape  // Go to escape state to handle potential ST
+                } else if char.isControlCharacter {
+                    // Control char terminates OSC and should be processed
                     tokens.append(.escape(.setTitle(oscString)))
                     state = .ground
+                    tokens.append(.controlChar(char))
                 } else {
                     oscString.append(char)
                 }

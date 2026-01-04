@@ -108,7 +108,8 @@ final class TerminalEmulator: ObservableObject {
 
     private func handleControlChar(_ char: Character) {
         switch char {
-        case "\n", "\u{0A}": // Line Feed
+        case "\n", "\u{0A}": // Line Feed (also resets column in newline mode)
+            cursorCol = 0
             lineFeed()
 
         case "\r", "\u{0D}": // Carriage Return

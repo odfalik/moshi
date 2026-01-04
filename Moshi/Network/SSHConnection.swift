@@ -175,45 +175,11 @@ final class SSHConnection: @unchecked Sendable {
         }
     }
 
-    // Fallback for iOS 17
+    // Fallback for iOS 17 - limited functionality
     private func startShellLegacy() async throws {
-        // For iOS 17, use executeCommandStream with inShell: true
-        guard let client = client else {
-            throw SSHError.notConnected
-        }
-
-        shellTask = Task { [weak self] in
-            do {
-                let stream = try await client.executeCommandStream("", inShell: true)
-
-                for try await output in stream {
-                    guard let self = self else { break }
-
-                    switch output {
-                    case .stdout(var buffer):
-                        if let text = buffer.readString(length: buffer.readableBytes) {
-                            await MainActor.run {
-                                self.delegate?.connectionDidReceiveOutput(text)
-                            }
-                        }
-                    case .stderr(var buffer):
-                        if let text = buffer.readString(length: buffer.readableBytes) {
-                            await MainActor.run {
-                                self.delegate?.connectionDidReceiveOutput(text)
-                            }
-                        }
-                    }
-                }
-
-                await MainActor.run { [weak self] in
-                    self?.delegate?.connectionDidDisconnect(error: nil)
-                }
-            } catch {
-                await MainActor.run { [weak self] in
-                    self?.delegate?.connectionDidDisconnect(error: error)
-                }
-            }
-        }
+        // iOS 17 doesn't support the PTY API needed for interactive shells
+        // Throw a clear error so users know they need iOS 18+
+        throw SSHError.unsupportedIOSVersion
     }
 
     // MARK: - Data I/O
@@ -325,6 +291,7 @@ enum SSHError: LocalizedError {
     case invalidPacket
     case moshServerFailed
     case timeout
+    case unsupportedIOSVersion
 
     var errorDescription: String? {
         switch self {
@@ -346,6 +313,8 @@ enum SSHError: LocalizedError {
             return "Failed to start mosh-server"
         case .timeout:
             return "Connection timed out"
+        case .unsupportedIOSVersion:
+            return "Interactive terminal requires iOS 18 or later"
         }
     }
 }

@@ -61,7 +61,8 @@ struct HostEditView: View {
             // Authentication
             Section("Authentication") {
                 Picker("Method", selection: $authMethod) {
-                    ForEach(AuthMethod.allCases) { method in
+                    // Filter out SSH Agent - not supported on iOS
+                    ForEach(AuthMethod.allCases.filter { $0 != .agent }) { method in
                         Label(method.rawValue, systemImage: method.icon)
                             .tag(method)
                     }

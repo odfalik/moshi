@@ -293,6 +293,7 @@ struct TerminalContainerView: View {
         TerminalView(session: session)
             .navigationTitle(session.host.displayName)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .tabBar)
     }
 }
 

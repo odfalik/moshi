@@ -42,6 +42,9 @@
 		E81000012B5A00000021 /* PortForwardingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E81000002B5A00000021 /* PortForwardingManager.swift */; };
 		E81000012B5A00000022 /* Logging.swift in Sources */ = {isa = PBXBuildFile; fileRef = E81000002B5A00000022 /* Logging.swift */; };
 		E81000012B5A00000023 /* ConnectionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = E81000002B5A00000023 /* ConnectionState.swift */; };
+		E81000012B5A00000026 /* RemoteDependencyChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E81000002B5A00000026 /* RemoteDependencyChecker.swift */; };
+		E81000012B5A00000027 /* LiveActivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E81000002B5A00000027 /* LiveActivityManager.swift */; };
+		E81000012B5A00000028 /* SessionActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E81000002B5A00000028 /* SessionActivityAttributes.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -83,6 +86,9 @@
 		E81000002B5A00000023 /* ConnectionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionState.swift; sourceTree = "<group>"; };
 		E81000002B5A00000024 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		E81000002B5A00000025 /* Moshi.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Moshi.entitlements; sourceTree = "<group>"; };
+		E81000002B5A00000026 /* RemoteDependencyChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDependencyChecker.swift; sourceTree = "<group>"; };
+		E81000002B5A00000027 /* LiveActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityManager.swift; sourceTree = "<group>"; };
+		E81000002B5A00000028 /* SessionActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionActivityAttributes.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -137,6 +143,7 @@
 				E81000002B5A0000000C /* Session.swift */,
 				E81000002B5A00000023 /* ConnectionState.swift */,
 				E81000002B5A0000001D /* Theme.swift */,
+				E81000002B5A00000028 /* SessionActivityAttributes.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -191,6 +198,8 @@
 				E81000002B5A00000010 /* DictationManager.swift */,
 				E81000002B5A0000001B /* SSHKeyManager.swift */,
 				E81000002B5A0000001C /* AppSettings.swift */,
+				E81000002B5A00000026 /* RemoteDependencyChecker.swift */,
+				E81000002B5A00000027 /* LiveActivityManager.swift */,
 			);
 			path = Managers;
 			sourceTree = "<group>";
@@ -311,6 +320,9 @@
 				E81000012B5A00000021 /* PortForwardingManager.swift in Sources */,
 				E81000012B5A00000022 /* Logging.swift in Sources */,
 				E81000012B5A00000023 /* ConnectionState.swift in Sources */,
+				E81000012B5A00000026 /* RemoteDependencyChecker.swift in Sources */,
+				E81000012B5A00000027 /* LiveActivityManager.swift in Sources */,
+				E81000012B5A00000028 /* SessionActivityAttributes.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

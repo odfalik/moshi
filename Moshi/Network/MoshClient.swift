@@ -257,11 +257,10 @@ final class MoshCryptoState {
             outputByteCount: 64
         )
 
-        derivedKey.withUnsafeBytes { bytes in
-            let keyData = Data(bytes)
-            encryptionKey = SymmetricKey(data: keyData[0..<32])
-            decryptionKey = SymmetricKey(data: keyData[32..<64])
-        }
+        // Extract key bytes and create symmetric keys
+        let derivedData = derivedKey.withUnsafeBytes { Data($0) }
+        encryptionKey = SymmetricKey(data: derivedData[0..<32])
+        decryptionKey = SymmetricKey(data: derivedData[32..<64])
     }
 
     func encrypt(_ data: Data, sequence: UInt64) -> Data? {

@@ -120,7 +120,7 @@ struct MacroKeyboard: View {
             }
 
         case .tmuxPrefix:
-            session.sendInput("\u{01}") // Ctrl-A or Ctrl-B based on settings
+            session.sendInput(appSettings.tmuxPrefix.sequence)
 
         case .custom(let handler):
             handler(session)
@@ -136,7 +136,7 @@ struct MacroKeyboard: View {
         case .specialKey(let key):
             session.sendSpecialKey(key)
         case .tmuxPrefix:
-            session.sendInput("\u{02}") // Ctrl-B
+            session.sendInput(appSettings.tmuxPrefix.sequence)
         default:
             break
         }

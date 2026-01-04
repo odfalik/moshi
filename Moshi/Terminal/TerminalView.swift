@@ -153,9 +153,8 @@ struct TerminalView: View {
 
     private func updateTerminalSize(_ size: CGSize) {
         let font = appSettings.terminalFont.uiFont
-        let charWidth = font.monospacedDigitFontDescriptor?.postScriptName != nil
-            ? "W".size(withAttributes: [.font: font]).width
-            : font.pointSize * 0.6
+        // Calculate character width for monospaced font
+        let charWidth = "W".size(withAttributes: [.font: font]).width
 
         let charHeight = font.lineHeight
 

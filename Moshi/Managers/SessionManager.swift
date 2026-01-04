@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import SwiftUI
 
+@MainActor
 final class SessionManager: ObservableObject {
     static let shared = SessionManager()
 
@@ -30,8 +31,14 @@ final class SessionManager: ObservableObject {
             currentSessionId = session.id
         }
 
+        // Start Live Activity
+        await LiveActivityManager.shared.startActivity(for: session)
+
         // Connect
         try await session.connect()
+
+        // Update Live Activity with connected state
+        await LiveActivityManager.shared.updateActivity(for: session)
 
         // Record in recent connections
         recordConnection(host)
@@ -40,6 +47,9 @@ final class SessionManager: ObservableObject {
     }
 
     func closeSession(_ session: Session) {
+        // End Live Activity
+        LiveActivityManager.shared.endActivity(for: session)
+
         session.disconnect()
 
         activeSessions.removeAll { $0.id == session.id }
@@ -50,6 +60,9 @@ final class SessionManager: ObservableObject {
     }
 
     func closeAllSessions() {
+        // End all Live Activities
+        LiveActivityManager.shared.endAllActivities()
+
         for session in activeSessions {
             session.disconnect()
         }

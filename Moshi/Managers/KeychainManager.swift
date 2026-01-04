@@ -1,6 +1,7 @@
 import Foundation
 import Security
 import LocalAuthentication
+import CryptoKit
 
 final class KeychainManager {
     static let shared = KeychainManager()
@@ -196,29 +197,34 @@ final class KeychainManager {
     // MARK: - Encryption Helpers
 
     private func encryptData(_ data: Data, with passphrase: String) throws -> Data {
-        // Use CryptoKit for encryption
         guard let passphraseData = passphrase.data(using: .utf8) else {
             throw KeychainError.encodingFailed
         }
 
         // Derive key from passphrase using SHA256
-        var key = [UInt8](repeating: 0, count: 32)
-        passphraseData.withUnsafeBytes { passphraseBytes in
-            _ = CC_SHA256(passphraseBytes.baseAddress, CC_LONG(passphraseData.count), &key)
-        }
+        let hash = SHA256.hash(data: passphraseData)
+        let key = SymmetricKey(data: hash)
 
-        // Simple XOR encryption (for demo - in production use proper AES)
-        var encrypted = Data()
-        for (index, byte) in data.enumerated() {
-            encrypted.append(byte ^ key[index % key.count])
+        // Encrypt using AES-GCM
+        let sealedBox = try AES.GCM.seal(data, using: key)
+        guard let combined = sealedBox.combined else {
+            throw KeychainError.encodingFailed
         }
-
-        return encrypted
+        return combined
     }
 
     private func decryptData(_ data: Data, with passphrase: String) throws -> Data {
-        // XOR is symmetric
-        return try encryptData(data, with: passphrase)
+        guard let passphraseData = passphrase.data(using: .utf8) else {
+            throw KeychainError.encodingFailed
+        }
+
+        // Derive key from passphrase using SHA256
+        let hash = SHA256.hash(data: passphraseData)
+        let key = SymmetricKey(data: hash)
+
+        // Decrypt using AES-GCM
+        let sealedBox = try AES.GCM.SealedBox(combined: data)
+        return try AES.GCM.open(sealedBox, using: key)
     }
 
     // MARK: - Biometric Check
@@ -293,6 +299,3 @@ enum KeychainError: LocalizedError {
         }
     }
 }
-
-// CommonCrypto for SHA256
-import CommonCrypto

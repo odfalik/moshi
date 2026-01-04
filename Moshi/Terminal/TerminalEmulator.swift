@@ -136,16 +136,14 @@ final class TerminalEmulator: ObservableObject {
         cursorRow += 1
 
         if cursorRow >= rows {
-            // Scroll up
-            let scrolledLine = lines.removeFirst()
-
-            // Add to scrollback
-            if lines.count > scrollbackLimit {
-                lines.removeFirst()
-            }
-
+            // Scroll up - add new line at bottom
             lines.append(createEmptyLine())
             cursorRow = rows - 1
+
+            // Trim scrollback if exceeds limit
+            while lines.count > scrollbackLimit {
+                lines.removeFirst()
+            }
         }
     }
 

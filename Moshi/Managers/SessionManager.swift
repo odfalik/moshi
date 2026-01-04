@@ -10,6 +10,9 @@ final class SessionManager: ObservableObject {
     @Published var currentSessionId: UUID?
     @Published var recentConnections: [Host] = []
 
+    /// Set when a session should be navigated to (for auto-open behavior)
+    @Published var pendingNavigationSessionId: UUID?
+
     private var cancellables = Set<AnyCancellable>()
     private let maxRecentConnections = 10
 
@@ -42,6 +45,11 @@ final class SessionManager: ObservableObject {
 
         // Record in recent connections
         recordConnection(host)
+
+        // Trigger navigation to the new session
+        await MainActor.run {
+            pendingNavigationSessionId = session.id
+        }
 
         return session
     }

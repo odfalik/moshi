@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var showingAddHost = false
     @State private var showingSettings = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
+    @State private var sessionNavigationPath = NavigationPath()
 
     enum ContentTab: String, CaseIterable {
         case hosts = "Hosts"
@@ -73,8 +74,13 @@ struct ContentView: View {
             }
             .tag(ContentTab.hosts)
 
-            NavigationStack {
+            NavigationStack(path: $sessionNavigationPath) {
                 SessionListView()
+                    .navigationDestination(for: UUID.self) { sessionId in
+                        if let session = sessionManager.activeSessions.first(where: { $0.id == sessionId }) {
+                            TerminalContainerView(session: session)
+                        }
+                    }
             }
             .tabItem {
                 Label("Sessions", systemImage: "terminal")
@@ -89,6 +95,18 @@ struct ContentView: View {
                 Label("Keys", systemImage: "key")
             }
             .tag(ContentTab.keys)
+        }
+        .onChange(of: sessionManager.pendingNavigationSessionId) { _, sessionId in
+            if let sessionId = sessionId {
+                // Switch to sessions tab and navigate to the session
+                selectedTab = .sessions
+                // Small delay to ensure tab switch completes before navigation
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    sessionNavigationPath.append(sessionId)
+                    // Clear the pending navigation
+                    sessionManager.pendingNavigationSessionId = nil
+                }
+            }
         }
     }
 
@@ -221,9 +239,7 @@ struct SessionListView: View {
             } else {
                 List {
                     ForEach(sessionManager.activeSessions) { session in
-                        NavigationLink {
-                            TerminalContainerView(session: session)
-                        } label: {
+                        NavigationLink(value: session.id) {
                             SessionRowView(session: session)
                         }
                     }

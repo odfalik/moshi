@@ -30,7 +30,10 @@ final class KeychainManager {
             kSecValueData as String: passwordData
         ]
 
-        // Require biometric authentication (don't combine with kSecAttrAccessible)
+        // Use biometric authentication on real devices, simple accessibility on simulator
+        #if targetEnvironment(simulator)
+        query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        #else
         if let accessControl = SecAccessControlCreateWithFlags(
             nil,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
@@ -39,9 +42,9 @@ final class KeychainManager {
         ) {
             query[kSecAttrAccessControl as String] = accessControl
         } else {
-            // Fallback if access control creation fails
             query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         }
+        #endif
 
         let status = SecItemAdd(query as CFDictionary, nil)
 
@@ -122,7 +125,10 @@ final class KeychainManager {
             kSecValueData as String: dataToStore
         ]
 
-        // Require biometric for keys (don't combine with kSecAttrAccessible)
+        // Use biometric authentication on real devices, simple accessibility on simulator
+        #if targetEnvironment(simulator)
+        query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        #else
         if let accessControl = SecAccessControlCreateWithFlags(
             nil,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
@@ -131,9 +137,9 @@ final class KeychainManager {
         ) {
             query[kSecAttrAccessControl as String] = accessControl
         } else {
-            // Fallback if access control creation fails
             query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         }
+        #endif
 
         let status = SecItemAdd(query as CFDictionary, nil)
 

@@ -342,17 +342,32 @@ final class SSHKeyManager {
         //                      number of keys (uint32), public key (string), private key (string)
         var offset = header.count
 
-        // Skip ciphername
+        // Read ciphername to check if encrypted
         guard let cipherLen = readUInt32(from: data, at: &offset) else {
             throw SSHKeyError.invalidFormat
         }
+        guard offset + Int(cipherLen) <= data.count else {
+            throw SSHKeyError.invalidFormat
+        }
+        let cipherData = data[offset..<(offset + Int(cipherLen))]
+        let cipherName = String(data: cipherData, encoding: .utf8) ?? ""
         offset += Int(cipherLen)
 
-        // Skip kdfname
+        // Read kdfname to check if encrypted
         guard let kdfLen = readUInt32(from: data, at: &offset) else {
             throw SSHKeyError.invalidFormat
         }
+        guard offset + Int(kdfLen) <= data.count else {
+            throw SSHKeyError.invalidFormat
+        }
+        let kdfData = data[offset..<(offset + Int(kdfLen))]
+        let kdfName = String(data: kdfData, encoding: .utf8) ?? ""
         offset += Int(kdfLen)
+
+        // Check if the key is encrypted
+        if cipherName != "none" || kdfName != "none" {
+            throw SSHKeyError.passphraseRequired
+        }
 
         // Skip kdfoptions
         guard let kdfOptsLen = readUInt32(from: data, at: &offset) else {
@@ -410,8 +425,18 @@ final class SSHKeyManager {
     }
 
     private func parseRSAPrivateKey(_ pem: String) throws -> (SSHKey.KeyType, Data) {
+        // Check for encryption headers (traditional PEM encrypted format)
+        if pem.contains("ENCRYPTED") || pem.contains("Proc-Type:") || pem.contains("DEK-Info:") {
+            throw SSHKeyError.passphraseRequired
+        }
+
         let lines = pem.components(separatedBy: "\n")
-        let base64Lines = lines.filter { !$0.hasPrefix("-----") && !$0.isEmpty }
+        let base64Lines = lines.filter {
+            !$0.hasPrefix("-----") &&
+            !$0.hasPrefix("Proc-Type:") &&
+            !$0.hasPrefix("DEK-Info:") &&
+            !$0.isEmpty
+        }
         let base64 = base64Lines.joined()
 
         guard let data = Data(base64Encoded: base64) else {
@@ -422,8 +447,18 @@ final class SSHKeyManager {
     }
 
     private func parseECPrivateKey(_ pem: String) throws -> (SSHKey.KeyType, Data) {
+        // Check for encryption headers (traditional PEM encrypted format)
+        if pem.contains("ENCRYPTED") || pem.contains("Proc-Type:") || pem.contains("DEK-Info:") {
+            throw SSHKeyError.passphraseRequired
+        }
+
         let lines = pem.components(separatedBy: "\n")
-        let base64Lines = lines.filter { !$0.hasPrefix("-----") && !$0.isEmpty }
+        let base64Lines = lines.filter {
+            !$0.hasPrefix("-----") &&
+            !$0.hasPrefix("Proc-Type:") &&
+            !$0.hasPrefix("DEK-Info:") &&
+            !$0.isEmpty
+        }
         let base64 = base64Lines.joined()
 
         guard let data = Data(base64Encoded: base64) else {

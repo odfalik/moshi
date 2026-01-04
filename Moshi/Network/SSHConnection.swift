@@ -222,9 +222,21 @@ final class SSHConnection: @unchecked Sendable {
 
     // MARK: - Data I/O
 
+    /// Check if the connection is ready for input
+    var isReady: Bool {
+        authenticated && stdinWriter != nil && shellTask != nil && !shellTask!.isCancelled
+    }
+
     func send(_ text: String) {
         guard authenticated else {
             Logger.network.debug("SSHConnection.send: Not authenticated, dropping input")
+            return
+        }
+
+        // Check if shell task is still running
+        guard let task = shellTask, !task.isCancelled else {
+            Logger.network.warning("SSHConnection.send: Shell task not running, notifying disconnect")
+            delegate?.connectionDidDisconnect(error: SSHError.connectionClosed)
             return
         }
 
@@ -236,10 +248,15 @@ final class SSHConnection: @unchecked Sendable {
                     try await writer.write(buffer)
                     Logger.network.debug("SSHConnection.send: Sent \(text.count) characters")
                 } else {
-                    Logger.network.debug("SSHConnection.send: stdinWriter is nil, dropping input")
+                    Logger.network.warning("SSHConnection.send: stdinWriter is nil, connection may be closing")
+                    // Don't immediately disconnect - the writer might be temporarily unavailable
                 }
             } catch {
                 Logger.network.error("Failed to send data: \(error.localizedDescription)")
+                // Notify about the error so the UI can show it
+                await MainActor.run { [weak self] in
+                    self?.delegate?.connectionDidDisconnect(error: error)
+                }
             }
         }
     }

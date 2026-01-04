@@ -12,6 +12,13 @@ final class TmuxIntegration {
         self.session = session
     }
 
+    /// Escape a string for safe use in single-quoted shell commands
+    /// Single quotes cannot be escaped inside single quotes, so we end the quote,
+    /// add an escaped single quote, and start a new quote: 'foo'\''bar' = foo'bar
+    private func shellEscape(_ string: String) -> String {
+        return string.replacingOccurrences(of: "'", with: "'\\''")
+    }
+
     // MARK: - Session Management
 
     func listSessions() async throws -> [TmuxSession] {
@@ -42,7 +49,7 @@ final class TmuxIntegration {
         let sessionName = name ?? TmuxIntegration.defaultSessionName
 
         // Create session but don't attach (we'll attach separately)
-        let output = try await executeCommand("tmux new-session -d -s '\(sessionName)' -P -F '#{session_id}'")
+        let output = try await executeCommand("tmux new-session -d -s '\(shellEscape(sessionName))' -P -F '#{session_id}'")
         let sessionId = output.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Now attach to the session
@@ -60,21 +67,21 @@ final class TmuxIntegration {
 
     func attachSession(_ tmuxSession: TmuxSession) async throws {
         // Attach to existing session
-        session?.sendCommand("tmux attach-session -t '\(tmuxSession.name)'")
+        session?.sendCommand("tmux attach-session -t '\(shellEscape(tmuxSession.name))'")
     }
 
     func killSession(_ tmuxSession: TmuxSession) async throws {
-        _ = try await executeCommand("tmux kill-session -t '\(tmuxSession.name)'")
+        _ = try await executeCommand("tmux kill-session -t '\(shellEscape(tmuxSession.name))'")
     }
 
     func renameSession(_ tmuxSession: TmuxSession, to newName: String) async throws {
-        _ = try await executeCommand("tmux rename-session -t '\(tmuxSession.name)' '\(newName)'")
+        _ = try await executeCommand("tmux rename-session -t '\(shellEscape(tmuxSession.name))' '\(shellEscape(newName))'")
     }
 
     // MARK: - Window Management
 
     func listWindows(in tmuxSession: TmuxSession? = nil) async throws -> [TmuxWindow] {
-        let targetFlag = tmuxSession.map { "-t '\($0.name)'" } ?? ""
+        let targetFlag = tmuxSession.map { "-t '\(shellEscape($0.name))'" } ?? ""
         let output = try await executeCommand("tmux list-windows \(targetFlag) -F '#{window_id}:#{window_index}:#{window_name}:#{window_active}:#{window_panes}'")
 
         return output.components(separatedBy: "\n")
@@ -96,7 +103,7 @@ final class TmuxIntegration {
     func createWindow(name: String? = nil) async throws {
         var command = "tmux new-window"
         if let name = name {
-            command += " -n '\(name)'"
+            command += " -n '\(shellEscape(name))'"
         }
         session?.sendCommand(command)
     }
@@ -110,7 +117,7 @@ final class TmuxIntegration {
     }
 
     func renameWindow(index: Int, to name: String) async throws {
-        session?.sendCommand("tmux rename-window -t \(index) '\(name)'")
+        session?.sendCommand("tmux rename-window -t \(index) '\(shellEscape(name))'")
     }
 
     func moveWindow(from: Int, to: Int) async throws {

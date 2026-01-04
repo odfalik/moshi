@@ -292,6 +292,7 @@ struct HiddenInput: UIViewRepresentable {
         textField.keyboardType = .asciiCapable
         textField.returnKeyType = .default
         textField.onSpecialKey = onSpecialKey
+        textField.onTextInput = onTextInput
 
         // Become first responder on next run loop to ensure view is in hierarchy
         DispatchQueue.main.async {
@@ -303,6 +304,11 @@ struct HiddenInput: UIViewRepresentable {
 
     func updateUIView(_ uiView: UITextField, context: Context) {
         uiView.text = text
+        // Update callbacks in case they changed
+        if let terminalField = uiView as? TerminalTextField {
+            terminalField.onSpecialKey = onSpecialKey
+            terminalField.onTextInput = onTextInput
+        }
         // Always try to become first responder when focused
         if isFocused && !uiView.isFirstResponder {
             DispatchQueue.main.async {
@@ -341,6 +347,7 @@ struct HiddenInput: UIViewRepresentable {
 
 class TerminalTextField: UITextField {
     var onSpecialKey: ((SpecialKey) -> Void)?
+    var onTextInput: ((String) -> Void)?
 
     override var keyCommands: [UIKeyCommand]? {
         var commands: [UIKeyCommand] = []
@@ -371,7 +378,8 @@ class TerminalTextField: UITextField {
     }
 
     @objc private func handleControlKey(_ command: UIKeyCommand) {
-        guard let input = command.input?.lowercased().first else { return }
+        guard let input = command.input?.lowercased().first,
+              let asciiValue = input.asciiValue else { return }
 
         switch input {
         case "c": onSpecialKey?(.ctrlC)
@@ -379,10 +387,12 @@ class TerminalTextField: UITextField {
         case "z": onSpecialKey?(.ctrlZ)
         case "l": onSpecialKey?(.ctrlL)
         default:
-            // Send raw control character
-            let controlChar = String(UnicodeScalar(UInt8(input.asciiValue! - 96)))
-            // Handle through normal input
-            break
+            // Send raw control character (Ctrl+A = 0x01, Ctrl+B = 0x02, etc.)
+            let controlCode = asciiValue - 96  // 'a' is 97, Ctrl+A is 1
+            if let scalar = UnicodeScalar(controlCode) {
+                let controlChar = String(Character(scalar))
+                onTextInput?(controlChar)
+            }
         }
     }
 

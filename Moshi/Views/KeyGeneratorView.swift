@@ -190,12 +190,9 @@ struct KeyGenerateSheet: View {
     }
 
     private func generateKey() {
-        guard !passphrase.isEmpty && passphrase != confirmPassphrase else {
-            if !passphrase.isEmpty {
-                errorMessage = "Passphrases don't match"
-                return
-            }
-            errorMessage = nil
+        // Validate passphrase confirmation if passphrase is provided
+        if !passphrase.isEmpty && passphrase != confirmPassphrase {
+            errorMessage = "Passphrases don't match"
             return
         }
 

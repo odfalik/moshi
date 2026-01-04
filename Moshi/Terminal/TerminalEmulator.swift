@@ -168,6 +168,20 @@ final class TerminalEmulator: ObservableObject {
             cursorRow = min(rows - 1, max(0, row - 1))
             cursorCol = min(cols - 1, max(0, col - 1))
 
+        case .cursorHorizontalAbsolute(let col):
+            cursorCol = min(cols - 1, max(0, col - 1))
+
+        case .cursorVerticalAbsolute(let row):
+            cursorRow = min(rows - 1, max(0, row - 1))
+
+        case .cursorNextLine(let n):
+            cursorRow = min(rows - 1, cursorRow + n)
+            cursorCol = 0
+
+        case .cursorPreviousLine(let n):
+            cursorRow = max(0, cursorRow - n)
+            cursorCol = 0
+
         case .eraseDisplay(let mode):
             eraseDisplay(mode: mode)
 

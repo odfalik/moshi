@@ -13,6 +13,10 @@ final class ANSIParser {
         case cursorForward(Int)
         case cursorBack(Int)
         case cursorPosition(Int, Int)
+        case cursorHorizontalAbsolute(Int)  // CHA - set column only
+        case cursorVerticalAbsolute(Int)    // VPA - set row only
+        case cursorNextLine(Int)            // CNL - down N and to column 1
+        case cursorPreviousLine(Int)        // CPL - up N and to column 1
         case eraseDisplay(Int)
         case eraseLine(Int)
         case sgr([Int])
@@ -211,9 +215,9 @@ final class ANSIParser {
         case "B": return .cursorDown(max(1, n))
         case "C": return .cursorForward(max(1, n))
         case "D": return .cursorBack(max(1, n))
-        case "E": return .cursorDown(max(1, n)) // CNL - also moves to column 1
-        case "F": return .cursorUp(max(1, n))   // CPL - also moves to column 1
-        case "G": return .cursorPosition(0, max(1, n)) // CHA - cursor horizontal absolute
+        case "E": return .cursorNextLine(max(1, n))     // CNL - down N and to column 1
+        case "F": return .cursorPreviousLine(max(1, n)) // CPL - up N and to column 1
+        case "G": return .cursorHorizontalAbsolute(max(1, n)) // CHA - set column only
         case "H", "f": return .cursorPosition(n, m) // CUP - cursor position
         case "J": return .eraseDisplay(n)
         case "K": return .eraseLine(n)
@@ -225,7 +229,7 @@ final class ANSIParser {
         case "r": return .setScrollRegion(n, m)
         case "s": return .saveCursor
         case "u": return .restoreCursor
-        case "d": return .cursorPosition(max(1, n), 0) // VPA - vertical position absolute
+        case "d": return .cursorVerticalAbsolute(max(1, n)) // VPA - set row only
         case "@": return .unknown // ICH - insert characters
         case "P": return .unknown // DCH - delete characters
         case "X": return .unknown // ECH - erase characters

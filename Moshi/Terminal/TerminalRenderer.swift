@@ -8,21 +8,30 @@ struct TerminalRenderer: View {
     @State private var contentSize: CGSize = .zero
     @State private var selectedRange: TerminalSelection?
 
+    /// Get only the visible lines from the emulator
+    private var visibleLines: [(index: Int, line: TerminalLine)] {
+        let start = emulator.screenStart
+        let end = min(emulator.lines.count, start + emulator.rows)
+        return (start..<end).map { idx in
+            (index: idx - start, line: emulator.lines[idx])
+        }
+    }
+
     var body: some View {
         GeometryReader { geometry in
             ScrollViewReader { proxy in
                 ScrollView([.vertical, .horizontal], showsIndicators: true) {
                     VStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(emulator.lines.enumerated()), id: \.offset) { index, line in
+                        ForEach(visibleLines, id: \.line.id) { item in
                             TerminalLineView(
-                                line: line,
-                                lineIndex: index,
+                                line: item.line,
+                                lineIndex: item.index,
                                 theme: theme,
                                 font: font,
-                                cursorCol: index == emulator.cursorRow ? emulator.cursorCol : nil,
+                                cursorCol: item.index == emulator.cursorRow ? emulator.cursorCol : nil,
                                 selection: selectedRange
                             )
-                            .id(index)
+                            .id(item.line.id)
                         }
                     }
                     .background(
@@ -35,21 +44,31 @@ struct TerminalRenderer: View {
                     )
                 }
                 .onChange(of: emulator.cursorRow) { _, newRow in
-                    withAnimation(.easeOut(duration: 0.1)) {
-                        proxy.scrollTo(newRow, anchor: .bottom)
+                    // Get the line ID for the cursor row
+                    let start = emulator.screenStart
+                    let actualIndex = start + newRow
+                    if actualIndex >= 0 && actualIndex < emulator.lines.count {
+                        let lineId = emulator.lines[actualIndex].id
+                        withAnimation(.easeOut(duration: 0.1)) {
+                            proxy.scrollTo(lineId, anchor: .bottom)
+                        }
                     }
                 }
             }
             .background(theme.swiftUIBackground)
             .gesture(
-                DragGesture(minimumDistance: 0)
+                DragGesture(minimumDistance: 10)
                     .onChanged { value in
-                        updateSelection(at: value.location, in: geometry.size)
+                        updateSelection(at: value.location, in: geometry.size, isStart: value.translation == .zero)
                     }
                     .onEnded { _ in
-                        // Copy selection if any
+                        // Selection persists until user taps or context menu action
                     }
             )
+            .onTapGesture {
+                // Clear selection on tap
+                selectedRange = nil
+            }
             .contextMenu {
                 if selectedRange != nil {
                     Button {
@@ -77,16 +96,16 @@ struct TerminalRenderer: View {
         }
     }
 
-    private func updateSelection(at point: CGPoint, in size: CGSize) {
+    private func updateSelection(at point: CGPoint, in size: CGSize, isStart: Bool = false) {
         // Calculate character position from point
-        let charWidth = font.size * 0.6
-        let charHeight = font.uiFont.lineHeight
+        let charWidth = font.characterWidth
+        let charHeight = font.lineHeight
 
         let col = Int(point.x / charWidth)
         let row = Int(point.y / charHeight)
 
         // Update selection range
-        if selectedRange == nil {
+        if selectedRange == nil || isStart {
             selectedRange = TerminalSelection(startRow: row, startCol: col, endRow: row, endCol: col)
         } else {
             selectedRange?.endRow = row
@@ -98,18 +117,19 @@ struct TerminalRenderer: View {
         guard let selection = selectedRange else { return }
 
         var text = ""
-        for row in selection.startRow...selection.endRow {
-            guard row < emulator.lines.count else { continue }
+        let visible = visibleLines
+        for screenRow in selection.startRow...selection.endRow {
+            guard screenRow < visible.count else { continue }
 
-            let line = emulator.lines[row]
-            let startCol = row == selection.startRow ? selection.startCol : 0
-            let endCol = row == selection.endRow ? selection.endCol : line.cells.count
+            let line = visible[screenRow].line
+            let startCol = screenRow == selection.startRow ? selection.startCol : 0
+            let endCol = screenRow == selection.endRow ? selection.endCol : line.cells.count
 
             for col in startCol..<min(endCol, line.cells.count) {
                 text.append(line.cells[col].character)
             }
 
-            if row < selection.endRow && !line.wrapped {
+            if screenRow < selection.endRow && !line.wrapped {
                 text.append("\n")
             }
         }
@@ -130,11 +150,12 @@ struct TerminalRenderer: View {
     }
 
     private func selectAll() {
+        let visible = visibleLines
         selectedRange = TerminalSelection(
             startRow: 0,
             startCol: 0,
-            endRow: emulator.lines.count - 1,
-            endCol: emulator.lines.last?.cells.count ?? 0
+            endRow: max(0, visible.count - 1),
+            endCol: visible.last?.line.cells.count ?? 0
         )
     }
 }
@@ -201,7 +222,7 @@ struct CellView: View {
         Text(String(cell.character))
             .font(font.font)
             .foregroundColor(foregroundColor)
-            .frame(width: font.size * 0.6)
+            .frame(width: font.characterWidth)
             .background(backgroundColor)
             .overlay {
                 if isCursor {

@@ -27,6 +27,9 @@ final class ANSIParser {
         case setScrollRegion(Int, Int)
         case insertLines(Int)
         case deleteLines(Int)
+        case insertCharacters(Int)   // ICH - insert blank characters
+        case deleteCharacters(Int)   // DCH - delete characters
+        case eraseCharacters(Int)    // ECH - erase characters (replace with blanks)
         case scrollUp(Int)
         case scrollDown(Int)
         case setTitle(String)
@@ -230,9 +233,9 @@ final class ANSIParser {
         case "s": return .saveCursor
         case "u": return .restoreCursor
         case "d": return .cursorVerticalAbsolute(max(1, n)) // VPA - set row only
-        case "@": return .unknown // ICH - insert characters
-        case "P": return .unknown // DCH - delete characters
-        case "X": return .unknown // ECH - erase characters
+        case "@": return .insertCharacters(max(1, n)) // ICH - insert characters
+        case "P": return .deleteCharacters(max(1, n)) // DCH - delete characters
+        case "X": return .eraseCharacters(max(1, n)) // ECH - erase characters
         case "c": return .unknown // DA - device attributes
         case "n": return .unknown // DSR - device status report
         case "t": return .unknown // Window manipulation

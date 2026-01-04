@@ -308,4 +308,15 @@ struct TerminalFont: Codable, Equatable {
     var font: Font {
         .custom(name, size: size)
     }
+
+    /// The actual width of a single monospace character
+    var characterWidth: CGFloat {
+        let attributes: [NSAttributedString.Key: Any] = [.font: uiFont]
+        return "M".size(withAttributes: attributes).width
+    }
+
+    /// The line height for this font
+    var lineHeight: CGFloat {
+        uiFont.lineHeight
+    }
 }

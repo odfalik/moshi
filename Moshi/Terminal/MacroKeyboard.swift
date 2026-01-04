@@ -303,6 +303,8 @@ extension Macro {
         // Session Management
         Macro(label: "claude", icon: "bubble.left.and.bubble.right", action: .sendCommand("claude"), color: .purple, category: "claude"),
         Macro(label: "claude -c", icon: "arrow.clockwise", action: .sendCommand("claude -c"), color: .purple, category: "claude"),
+        Macro(label: "unlock", icon: "lock.open", action: .sendCommand("security unlock-keychain"), color: .orange, category: "claude"),
+        Macro(label: "/login", icon: "person.badge.key", action: .sendCommand("/login"), color: .green, category: "claude"),
         Macro(label: "/exit", icon: "xmark.circle", action: .sendCommand("/exit"), category: "claude"),
         Macro(label: "/clear", icon: "trash", action: .sendCommand("/clear"), category: "claude"),
 

@@ -165,11 +165,8 @@ struct TerminalView: View {
     }
 
     private func updateTerminalSize(_ size: CGSize) {
-        let font = appSettings.terminalFont.uiFont
-        // Calculate character width for monospaced font using a standard character
-        let attributes: [NSAttributedString.Key: Any] = [.font: font]
-        let charWidth = "M".size(withAttributes: attributes).width
-        let charHeight = font.lineHeight
+        let charWidth = appSettings.terminalFont.characterWidth
+        let charHeight = appSettings.terminalFont.lineHeight
 
         // Account for safe areas and UI elements
         let macroKeyboardHeight: CGFloat = showingMacroKeyboard ? 120 : 0  // Increased from 50
@@ -389,10 +386,9 @@ class TerminalTextField: UITextField {
         default:
             // Send raw control character (Ctrl+A = 0x01, Ctrl+B = 0x02, etc.)
             let controlCode = asciiValue - 96  // 'a' is 97, Ctrl+A is 1
-            if let scalar = UnicodeScalar(controlCode) {
-                let controlChar = String(Character(scalar))
-                onTextInput?(controlChar)
-            }
+            let scalar = UnicodeScalar(controlCode)
+            let controlChar = String(Character(scalar))
+            onTextInput?(controlChar)
         }
     }
 

@@ -3,12 +3,25 @@ import Combine
 
 final class TerminalEmulator: ObservableObject {
     @Published var lines: [TerminalLine] = []
-    @Published var cursorRow: Int = 0
+    @Published var cursorRow: Int = 0  // Row within the visible screen (0 to rows-1)
     @Published var cursorCol: Int = 0
     @Published var scrollOffset: Int = 0
 
-    private var cols: Int = 80
-    private var rows: Int = 24
+    private(set) var cols: Int = 80
+    private(set) var rows: Int = 24
+
+    // Deferred wrap: cursor is past the right margin but hasn't wrapped yet
+    private var pendingWrap: Bool = false
+
+    /// The starting index of the visible screen in the lines array
+    var screenStart: Int {
+        max(0, lines.count - rows)
+    }
+
+    /// Convert a screen-relative row to an actual index in lines array
+    private func lineIndex(for screenRow: Int) -> Int {
+        screenStart + screenRow
+    }
     private var scrollbackLimit: Int = 10000
 
     private var currentAttributes = CellAttributes()
@@ -86,9 +99,21 @@ final class TerminalEmulator: ObservableObject {
     }
 
     private func writeCharacter(_ char: Character) {
-        guard cursorRow < lines.count && cursorCol < cols else { return }
+        // Handle deferred wrap: if pending, wrap now before writing
+        if pendingWrap {
+            pendingWrap = false
+            let actualRow = lineIndex(for: cursorRow)
+            if actualRow < lines.count {
+                lines[actualRow].wrapped = true
+            }
+            cursorCol = 0
+            lineFeed()
+        }
 
-        lines[cursorRow].cells[cursorCol] = TerminalCell(
+        let actualRow = lineIndex(for: cursorRow)
+        guard actualRow < lines.count && cursorCol < cols else { return }
+
+        lines[actualRow].cells[cursorCol] = TerminalCell(
             character: char,
             foreground: currentForeground,
             background: currentBackground,
@@ -97,10 +122,10 @@ final class TerminalEmulator: ObservableObject {
 
         cursorCol += 1
 
+        // Deferred wrap: don't wrap yet, just mark as pending
         if cursorCol >= cols {
-            lines[cursorRow].wrapped = true
-            cursorCol = 0
-            lineFeed()
+            cursorCol = cols - 1  // Keep cursor at last column
+            pendingWrap = true
         }
     }
 
@@ -109,17 +134,21 @@ final class TerminalEmulator: ObservableObject {
     private func handleControlChar(_ char: Character) {
         switch char {
         case "\n", "\u{0A}": // Line Feed (also resets column in newline mode)
+            pendingWrap = false
             cursorCol = 0
             lineFeed()
 
         case "\r", "\u{0D}": // Carriage Return
+            pendingWrap = false
             cursorCol = 0
 
         case "\t", "\u{09}": // Tab
+            pendingWrap = false
             let nextTab = ((cursorCol / 8) + 1) * 8
             cursorCol = min(nextTab, cols - 1)
 
         case "\u{08}": // Backspace
+            pendingWrap = false
             if cursorCol > 0 {
                 cursorCol -= 1
             }
@@ -137,11 +166,20 @@ final class TerminalEmulator: ObservableObject {
         cursorRow += 1
 
         if cursorRow >= rows {
-            // Scroll up - add new line at bottom
-            lines.append(createEmptyLine())
+            if isAlternateScreen {
+                // On alternate screen: no scrollback, just scroll within fixed buffer
+                // Remove top line, add new line at bottom, keep lines.count = rows
+                if lines.count > 0 {
+                    lines.removeFirst()
+                }
+                lines.append(createEmptyLine())
+            } else {
+                // Normal screen: accumulate scrollback
+                lines.append(createEmptyLine())
+            }
             cursorRow = rows - 1
 
-            // Trim scrollback if exceeds limit
+            // Trim scrollback if exceeds limit (only applies to normal screen)
             while lines.count > scrollbackLimit {
                 lines.removeFirst()
             }
@@ -153,32 +191,41 @@ final class TerminalEmulator: ObservableObject {
     private func handleEscapeSequence(_ sequence: ANSIParser.EscapeSequence) {
         switch sequence {
         case .cursorUp(let n):
+            pendingWrap = false
             cursorRow = max(0, cursorRow - n)
 
         case .cursorDown(let n):
+            pendingWrap = false
             cursorRow = min(rows - 1, cursorRow + n)
 
         case .cursorForward(let n):
+            pendingWrap = false
             cursorCol = min(cols - 1, cursorCol + n)
 
         case .cursorBack(let n):
+            pendingWrap = false
             cursorCol = max(0, cursorCol - n)
 
         case .cursorPosition(let row, let col):
+            pendingWrap = false
             cursorRow = min(rows - 1, max(0, row - 1))
             cursorCol = min(cols - 1, max(0, col - 1))
 
         case .cursorHorizontalAbsolute(let col):
+            pendingWrap = false
             cursorCol = min(cols - 1, max(0, col - 1))
 
         case .cursorVerticalAbsolute(let row):
+            pendingWrap = false
             cursorRow = min(rows - 1, max(0, row - 1))
 
         case .cursorNextLine(let n):
+            pendingWrap = false
             cursorRow = min(rows - 1, cursorRow + n)
             cursorCol = 0
 
         case .cursorPreviousLine(let n):
+            pendingWrap = false
             cursorRow = max(0, cursorRow - n)
             cursorCol = 0
 
@@ -225,6 +272,15 @@ final class TerminalEmulator: ObservableObject {
         case .deleteLines(let n):
             deleteLines(n)
 
+        case .insertCharacters(let n):
+            insertCharacters(n)
+
+        case .deleteCharacters(let n):
+            deleteCharacters(n)
+
+        case .eraseCharacters(let n):
+            eraseCharacters(n)
+
         case .scrollUp(let n):
             for _ in 0..<n {
                 lines.removeFirst()
@@ -250,22 +306,30 @@ final class TerminalEmulator: ObservableObject {
         switch mode {
         case 0: // Cursor to end
             eraseLine(mode: 0)
-            for i in (cursorRow + 1)..<rows {
-                if i < lines.count {
-                    lines[i] = createEmptyLine()
+            for screenRow in (cursorRow + 1)..<rows {
+                let actualRow = lineIndex(for: screenRow)
+                if actualRow < lines.count {
+                    lines[actualRow] = createEmptyLine()
                 }
             }
 
         case 1: // Start to cursor
-            for i in 0..<cursorRow {
-                if i < lines.count {
-                    lines[i] = createEmptyLine()
+            for screenRow in 0..<cursorRow {
+                let actualRow = lineIndex(for: screenRow)
+                if actualRow < lines.count {
+                    lines[actualRow] = createEmptyLine()
                 }
             }
             eraseLine(mode: 1)
 
         case 2, 3: // Entire screen
-            lines = (0..<rows).map { _ in createEmptyLine() }
+            // Clear only the visible screen portion
+            for screenRow in 0..<rows {
+                let actualRow = lineIndex(for: screenRow)
+                if actualRow < lines.count {
+                    lines[actualRow] = createEmptyLine()
+                }
+            }
 
         default:
             break
@@ -273,25 +337,26 @@ final class TerminalEmulator: ObservableObject {
     }
 
     private func eraseLine(mode: Int) {
-        guard cursorRow < lines.count else { return }
+        let actualRow = lineIndex(for: cursorRow)
+        guard actualRow < lines.count else { return }
 
         switch mode {
         case 0: // Cursor to end
             for i in cursorCol..<cols {
-                if i < lines[cursorRow].cells.count {
-                    lines[cursorRow].cells[i] = TerminalCell()
+                if i < lines[actualRow].cells.count {
+                    lines[actualRow].cells[i] = TerminalCell()
                 }
             }
 
         case 1: // Start to cursor
             for i in 0...cursorCol {
-                if i < lines[cursorRow].cells.count {
-                    lines[cursorRow].cells[i] = TerminalCell()
+                if i < lines[actualRow].cells.count {
+                    lines[actualRow].cells[i] = TerminalCell()
                 }
             }
 
         case 2: // Entire line
-            lines[cursorRow] = createEmptyLine()
+            lines[actualRow] = createEmptyLine()
 
         default:
             break
@@ -299,21 +364,83 @@ final class TerminalEmulator: ObservableObject {
     }
 
     private func insertLines(_ n: Int) {
+        let actualRow = lineIndex(for: cursorRow)
+        let screenEnd = screenStart + rows
+
         for _ in 0..<n {
-            if cursorRow < lines.count {
-                lines.insert(createEmptyLine(), at: cursorRow)
-                if lines.count > rows {
-                    lines.removeLast()
-                }
+            guard actualRow < lines.count else { continue }
+
+            // Insert blank line at cursor position
+            lines.insert(createEmptyLine(), at: actualRow)
+
+            // Remove the line that scrolled off the bottom of the screen
+            if lines.count > screenEnd {
+                lines.remove(at: screenEnd)
             }
         }
     }
 
     private func deleteLines(_ n: Int) {
+        let actualRow = lineIndex(for: cursorRow)
+        let screenEnd = screenStart + rows
+
         for _ in 0..<n {
-            if cursorRow < lines.count {
-                lines.remove(at: cursorRow)
-                lines.append(createEmptyLine())
+            guard actualRow < lines.count else { continue }
+
+            // Remove line at cursor position
+            lines.remove(at: actualRow)
+
+            // Add blank line at bottom of screen
+            let insertPos = min(screenEnd - 1, lines.count)
+            lines.insert(createEmptyLine(), at: insertPos)
+        }
+    }
+
+    // MARK: - Character Operations
+
+    private func insertCharacters(_ n: Int) {
+        // ICH: Insert n blank characters at cursor, shifting existing content right
+        let actualRow = lineIndex(for: cursorRow)
+        guard actualRow < lines.count else { return }
+
+        var cells = lines[actualRow].cells
+        let insertCount = min(n, cols - cursorCol)
+
+        // Insert blank cells at cursor position
+        let blanks = Array(repeating: TerminalCell(), count: insertCount)
+        cells.insert(contentsOf: blanks, at: cursorCol)
+
+        // Trim to cols width (characters shifted off right edge are lost)
+        lines[actualRow].cells = Array(cells.prefix(cols))
+    }
+
+    private func deleteCharacters(_ n: Int) {
+        // DCH: Delete n characters at cursor, shifting content left, blanks added at right
+        let actualRow = lineIndex(for: cursorRow)
+        guard actualRow < lines.count else { return }
+
+        var cells = lines[actualRow].cells
+        let deleteCount = min(n, cols - cursorCol)
+
+        // Remove characters at cursor position
+        cells.removeSubrange(cursorCol..<(cursorCol + deleteCount))
+
+        // Add blanks at the end to maintain line width
+        cells.append(contentsOf: Array(repeating: TerminalCell(), count: deleteCount))
+
+        lines[actualRow].cells = cells
+    }
+
+    private func eraseCharacters(_ n: Int) {
+        // ECH: Replace n characters starting at cursor with blanks (no shift)
+        let actualRow = lineIndex(for: cursorRow)
+        guard actualRow < lines.count else { return }
+
+        let eraseCount = min(n, cols - cursorCol)
+        for i in 0..<eraseCount {
+            let col = cursorCol + i
+            if col < lines[actualRow].cells.count {
+                lines[actualRow].cells[col] = TerminalCell()
             }
         }
     }

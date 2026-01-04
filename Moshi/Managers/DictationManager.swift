@@ -4,6 +4,8 @@ import AVFoundation
 import Combine
 
 final class DictationManager: ObservableObject {
+    @MainActor static let shared = DictationManager()
+
     @Published var isRecording = false
     @Published var transcribedText = ""
     @Published var isAuthorized = false
@@ -13,9 +15,16 @@ final class DictationManager: ObservableObject {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private let speechRecognizer: SFSpeechRecognizer?
+    private var hasRequestedAuthorization = false
 
-    init() {
+    private init() {
         speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+        // Defer authorization request until actually needed
+    }
+
+    func ensureAuthorized() {
+        guard !hasRequestedAuthorization else { return }
+        hasRequestedAuthorization = true
         requestAuthorization()
     }
 

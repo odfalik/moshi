@@ -4,7 +4,7 @@ struct MacroKeyboard: View {
     @ObservedObject var session: Session
     @EnvironmentObject var appSettings: AppSettings
     @StateObject private var macroManager = MacroManager.shared
-    @StateObject private var dictationManager = DictationManager()
+    @ObservedObject private var dictationManager = DictationManager.shared
 
     @State private var activeRow: MacroRow = .special
     @State private var showingMacroEditor = false
@@ -146,6 +146,7 @@ struct MacroKeyboard: View {
         if isRecordingDictation {
             dictationManager.stopRecording()
         } else {
+            dictationManager.ensureAuthorized()
             dictationManager.startRecording()
         }
         isRecordingDictation.toggle()
@@ -233,6 +234,7 @@ enum MacroAction {
 extension Macro {
     // Special Keys Row
     static let specialKeys: [Macro] = [
+        Macro(label: "ENTER", icon: "return", action: .sendText("\r"), color: .green, category: "special"),
         Macro(label: "ESC", icon: "escape", action: .specialKey(.escape), category: "special"),
         Macro(label: "TAB", icon: "arrow.right.to.line", action: .specialKey(.tab), category: "special"),
         Macro(label: "^C", icon: "xmark.circle", action: .specialKey(.ctrlC), color: .red, category: "special"),
@@ -243,6 +245,7 @@ extension Macro {
         Macro(label: "↓", icon: "arrow.down", action: .specialKey(.down), category: "special"),
         Macro(label: "←", icon: "arrow.left", action: .specialKey(.left), category: "special"),
         Macro(label: "→", icon: "arrow.right", action: .specialKey(.right), category: "special"),
+        Macro(label: "DEL", icon: "delete.left", action: .sendText("\u{7F}"), category: "special"),
         Macro(label: "HOME", action: .specialKey(.home), category: "special"),
         Macro(label: "END", action: .specialKey(.end), category: "special"),
         Macro(label: "PGUP", action: .specialKey(.pageUp), category: "special"),

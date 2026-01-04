@@ -196,6 +196,26 @@ extension Session: SSHConnectionDelegate {
             state = newState
         }
     }
+
+    func connectionShouldTrustNewHost(fingerprint: String) async -> Bool {
+        // Ask delegate for user confirmation
+        if let delegate = delegate {
+            return await delegate.sessionShouldTrustNewHost(self, fingerprint: fingerprint)
+        }
+        // Default: auto-trust first connection (for backward compatibility)
+        Logger.network.warning("Auto-trusting new host (no delegate): \(fingerprint)")
+        return true
+    }
+
+    func connectionHostKeyChanged(newFingerprint: String, oldFingerprint: String) async -> Bool {
+        // Ask delegate for user confirmation
+        if let delegate = delegate {
+            return await delegate.sessionHostKeyChanged(self, newFingerprint: newFingerprint, oldFingerprint: oldFingerprint)
+        }
+        // Default: reject key changes (security)
+        Logger.network.error("Rejecting host key change (no delegate): \(oldFingerprint) -> \(newFingerprint)")
+        return false
+    }
 }
 
 // MARK: - Mosh Client Delegate
@@ -232,6 +252,12 @@ protocol SessionDelegate: AnyObject {
     func sessionDidReceiveOutput(_ session: Session, output: String)
     func sessionDidChangeState(_ session: Session, state: ConnectionState)
     func sessionDidUpdateTmux(_ session: Session)
+
+    /// Called when connecting to a new host - return true to trust
+    func sessionShouldTrustNewHost(_ session: Session, fingerprint: String) async -> Bool
+
+    /// Called when host key changed - return true to trust (dangerous!)
+    func sessionHostKeyChanged(_ session: Session, newFingerprint: String, oldFingerprint: String) async -> Bool
 }
 
 // MARK: - Supporting Types

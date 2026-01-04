@@ -8,6 +8,12 @@ protocol SSHConnectionDelegate: AnyObject {
     func connectionDidReceiveOutput(_ output: String)
     func connectionDidDisconnect(error: Error?)
     func connectionDidChangeState(_ newState: ConnectionState)
+
+    /// Called when connecting to a new host - return true to trust the key
+    func connectionShouldTrustNewHost(fingerprint: String) async -> Bool
+
+    /// Called when host key changed - return true to trust (dangerous!)
+    func connectionHostKeyChanged(newFingerprint: String, oldFingerprint: String) async -> Bool
 }
 
 final class SSHConnection: @unchecked Sendable {
@@ -38,11 +44,14 @@ final class SSHConnection: @unchecked Sendable {
         do {
             let authMethod = try await buildAuthMethod()
 
+            // Create host key validator with callbacks to delegate
+            let hostKeyValidator = createHostKeyValidator()
+
             client = try await SSHClient.connect(
                 host: host.hostname,
                 port: host.port,
                 authenticationMethod: authMethod,
-                hostKeyValidator: .acceptAnything(), // TODO: Implement proper host key checking
+                hostKeyValidator: hostKeyValidator,
                 reconnect: .never
             )
 
@@ -63,6 +72,35 @@ final class SSHConnection: @unchecked Sendable {
             delegate?.connectionDidChangeState(.error(error.localizedDescription))
             throw error
         }
+    }
+
+    private func createHostKeyValidator() -> SSHHostKeyValidator {
+        let hostname = host.hostname
+        let port = host.port
+
+        let validator = InteractiveHostKeyValidator(
+            hostname: hostname,
+            port: port,
+            onNewHost: { [weak self] (_: NIOSSHPublicKey, fingerprint: String) async -> Bool in
+                guard let delegate = self?.delegate else {
+                    // No delegate - auto-accept (for backward compatibility)
+                    return true
+                }
+                return await delegate.connectionShouldTrustNewHost(fingerprint: fingerprint)
+            },
+            onKeyChanged: { [weak self] (_: NIOSSHPublicKey, newFingerprint: String, oldFingerprint: String) async -> Bool in
+                guard let delegate = self?.delegate else {
+                    // No delegate - reject key changes by default (security)
+                    return false
+                }
+                return await delegate.connectionHostKeyChanged(
+                    newFingerprint: newFingerprint,
+                    oldFingerprint: oldFingerprint
+                )
+            }
+        )
+
+        return .custom(validator)
     }
 
     private func buildAuthMethod() async throws -> SSHAuthenticationMethod {

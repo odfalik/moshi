@@ -25,14 +25,13 @@
 - [ ] No sixel/image support
 - [ ] No true color (24-bit) support yet
 - [ ] text selection, copy/paste
+- [ ] Terminal bell should "ding" a session with visual indication, maybe push notif or haptic feedback
 
 ### Authentication
 - [ ] SSH agent not available on iOS
-- [~] No support for hardware keys (YubiKey, etc.) - not a priority
 
 ### Platform
 - [ ] iOS only - no macOS Catalyst support currently
-- [~] PTY shell requires iOS 18.0+ (fallback mode for iOS 17) - this is a non-issue
 
 ### Settings
 - [ ] font settings, color theme

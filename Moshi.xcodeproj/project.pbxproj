@@ -45,6 +45,7 @@
 		E81000012B5A00000026 /* RemoteDependencyChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E81000002B5A00000026 /* RemoteDependencyChecker.swift */; };
 		E81000012B5A00000027 /* LiveActivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E81000002B5A00000027 /* LiveActivityManager.swift */; };
 		E81000012B5A00000028 /* SessionActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E81000002B5A00000028 /* SessionActivityAttributes.swift */; };
+		E81000012B5A00000029 /* HostKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E81000002B5A00000029 /* HostKeyStore.swift */; };
 		FF268DD02F09F81600C9D6ED /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = FF268DCF2F09F81600C9D6ED /* Citadel */; };
 /* End PBXBuildFile section */
 
@@ -90,6 +91,7 @@
 		E81000002B5A00000026 /* RemoteDependencyChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDependencyChecker.swift; sourceTree = "<group>"; };
 		E81000002B5A00000027 /* LiveActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityManager.swift; sourceTree = "<group>"; };
 		E81000002B5A00000028 /* SessionActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionActivityAttributes.swift; sourceTree = "<group>"; };
+		E81000002B5A00000029 /* HostKeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeyStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -202,6 +204,7 @@
 				E81000002B5A0000001C /* AppSettings.swift */,
 				E81000002B5A00000026 /* RemoteDependencyChecker.swift */,
 				E81000002B5A00000027 /* LiveActivityManager.swift */,
+				E81000002B5A00000029 /* HostKeyStore.swift */,
 			);
 			path = Managers;
 			sourceTree = "<group>";
@@ -327,6 +330,7 @@
 				E81000012B5A00000026 /* RemoteDependencyChecker.swift in Sources */,
 				E81000012B5A00000027 /* LiveActivityManager.swift in Sources */,
 				E81000012B5A00000028 /* SessionActivityAttributes.swift in Sources */,
+				E81000012B5A00000029 /* HostKeyStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

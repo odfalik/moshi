@@ -8,7 +8,7 @@ struct QuickConnectView: View {
 
     @State private var connectionString = ""
     @State private var password = ""
-    @State private var useMosh = true
+    @State private var useMosh = false  // Mosh not implemented yet
     @State private var autoTmux = true
     @State private var isConnecting = false
     @State private var errorMessage: String?

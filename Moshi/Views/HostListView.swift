@@ -122,15 +122,6 @@ struct HostListView: View {
         .listStyle(.insetGrouped)
         .searchable(text: $searchText, prompt: "Search hosts")
         .navigationTitle("Hosts")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showingAddHost = true
-                } label: {
-                    Image(systemName: "plus")
-                }
-            }
-        }
         .sheet(isPresented: $showingAddHost) {
             NavigationStack {
                 HostEditView(host: nil)

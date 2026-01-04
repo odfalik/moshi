@@ -150,7 +150,7 @@ final class AppSettings: ObservableObject {
         smartQuotes = defaults.object(forKey: "smartQuotes") as? Bool ?? false
 
         // Connection
-        defaultUseMosh = defaults.object(forKey: "defaultUseMosh") as? Bool ?? true
+        defaultUseMosh = defaults.object(forKey: "defaultUseMosh") as? Bool ?? false  // Mosh not implemented yet
         defaultAutoTmux = defaults.object(forKey: "defaultAutoTmux") as? Bool ?? true
         keepAliveInterval = defaults.object(forKey: "keepAliveInterval") as? Int ?? 60
         connectionTimeout = defaults.object(forKey: "connectionTimeout") as? Int ?? 30
@@ -196,7 +196,7 @@ final class AppSettings: ObservableObject {
         autoCorrect = false
         smartQuotes = false
 
-        defaultUseMosh = true
+        defaultUseMosh = false  // Mosh not implemented yet
         defaultAutoTmux = true
         keepAliveInterval = 60
         connectionTimeout = 30

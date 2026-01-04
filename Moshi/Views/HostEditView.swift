@@ -15,7 +15,7 @@ struct HostEditView: View {
     @State private var password: String = ""
     @State private var selectedKeyId: UUID?
 
-    @State private var useMosh: Bool = true
+    @State private var useMosh: Bool = false  // Mosh not implemented yet
     @State private var moshPortStart: String = "60000"
     @State private var moshPortEnd: String = "61000"
 

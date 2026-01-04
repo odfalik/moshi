@@ -45,9 +45,15 @@ final class Session: Identifiable, ObservableObject {
                 lastActivity = Date()
             }
 
-            // Auto-attach to tmux if enabled
+            // Auto-attach to tmux if enabled (don't fail connection if tmux fails)
             if host.autoTmux {
-                try await attachOrCreateTmuxSession()
+                do {
+                    try await attachOrCreateTmuxSession()
+                } catch {
+                    // Log tmux error but keep connection alive
+                    Logger.session.warning("Tmux auto-attach failed: \(error.localizedDescription)")
+                    // Connection is still usable without tmux
+                }
             }
 
         } catch {
@@ -67,6 +73,7 @@ final class Session: Identifiable, ObservableObject {
     private func connectWithMosh() async throws {
         // First establish SSH to get mosh-server info
         let sshConnection = SSHConnection(host: host)
+        try await sshConnection.connect()  // Must connect first!
         let moshInfo = try await sshConnection.startMoshServer(portRange: host.moshPorts)
 
         // Then connect with mosh client

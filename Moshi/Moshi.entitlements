@@ -8,7 +8,7 @@
     <true/>
     <key>keychain-access-groups</key>
     <array>
-        <string>$(AppIdentifierPrefix)com.moshi.terminal</string>
+        <string>$(AppIdentifierPrefix)com.oded.moshi</string>
     </array>
 </dict>
 </plist>

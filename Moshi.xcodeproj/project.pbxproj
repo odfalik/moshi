@@ -45,6 +45,7 @@
 		E81000012B5A00000026 /* RemoteDependencyChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E81000002B5A00000026 /* RemoteDependencyChecker.swift */; };
 		E81000012B5A00000027 /* LiveActivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E81000002B5A00000027 /* LiveActivityManager.swift */; };
 		E81000012B5A00000028 /* SessionActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E81000002B5A00000028 /* SessionActivityAttributes.swift */; };
+		FF268DD02F09F81600C9D6ED /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = FF268DCF2F09F81600C9D6ED /* Citadel */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -96,6 +97,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FF268DD02F09F81600C9D6ED /* Citadel in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -230,6 +232,7 @@
 			);
 			name = Moshi;
 			packageProductDependencies = (
+				FF268DCF2F09F81600C9D6ED /* Citadel */,
 			);
 			productName = Moshi;
 			productReference = E80000002B5A00000000 /* Moshi.app */;
@@ -260,6 +263,7 @@
 			);
 			mainGroup = E80000022B5A00000000;
 			packageReferences = (
+				FF268DCE2F09F81600C9D6ED /* XCRemoteSwiftPackageReference "Citadel" */,
 			);
 			productRefGroup = E80000042B5A00000000 /* Products */;
 			projectDirPath = "";
@@ -456,18 +460,22 @@
 				CODE_SIGN_ENTITLEMENTS = Moshi/Moshi.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = ZJ2H5R49L5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Moshi/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Moshi;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Moshi needs local network access to connect to SSH servers on your local network and Tailscale.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Moshi uses the microphone for voice dictation to type commands.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Moshi uses speech recognition for voice dictation.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Moshi needs local network access to connect to SSH servers on your local network and Tailscale VPN.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Moshi uses the microphone for voice dictation to type terminal commands hands-free.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Moshi uses speech recognition to convert your voice to text for terminal input.";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIRequiredDeviceCapabilities = armv7;
+				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleDefault;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -475,7 +483,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.moshi.terminal;
+				PRODUCT_BUNDLE_IDENTIFIER = com.oded.moshi;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -494,18 +502,22 @@
 				CODE_SIGN_ENTITLEMENTS = Moshi/Moshi.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = ZJ2H5R49L5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Moshi/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Moshi;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Moshi needs local network access to connect to SSH servers on your local network and Tailscale.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Moshi uses the microphone for voice dictation to type commands.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Moshi uses speech recognition for voice dictation.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Moshi needs local network access to connect to SSH servers on your local network and Tailscale VPN.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Moshi uses the microphone for voice dictation to type terminal commands hands-free.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Moshi uses speech recognition to convert your voice to text for terminal input.";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIRequiredDeviceCapabilities = armv7;
+				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleDefault;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -513,7 +525,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.moshi.terminal;
+				PRODUCT_BUNDLE_IDENTIFIER = com.oded.moshi;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -546,6 +558,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		FF268DCE2F09F81600C9D6ED /* XCRemoteSwiftPackageReference "Citadel" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/orlandos-nl/Citadel";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.11.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		FF268DCF2F09F81600C9D6ED /* Citadel */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FF268DCE2F09F81600C9D6ED /* XCRemoteSwiftPackageReference "Citadel" */;
+			productName = Citadel;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = E80000002B5A00000004 /* Project object */;
 }

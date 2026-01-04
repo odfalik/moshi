@@ -27,11 +27,10 @@ final class KeychainManager {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
             kSecAttrAccount as String: account,
-            kSecValueData as String: passwordData,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            kSecValueData as String: passwordData
         ]
 
-        // Require biometric authentication
+        // Require biometric authentication (don't combine with kSecAttrAccessible)
         if let accessControl = SecAccessControlCreateWithFlags(
             nil,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
@@ -39,6 +38,9 @@ final class KeychainManager {
             nil
         ) {
             query[kSecAttrAccessControl as String] = accessControl
+        } else {
+            // Fallback if access control creation fails
+            query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         }
 
         let status = SecItemAdd(query as CFDictionary, nil)
@@ -117,11 +119,10 @@ final class KeychainManager {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: "\(serviceName).keys",
             kSecAttrAccount as String: account,
-            kSecValueData as String: dataToStore,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            kSecValueData as String: dataToStore
         ]
 
-        // Require biometric for keys
+        // Require biometric for keys (don't combine with kSecAttrAccessible)
         if let accessControl = SecAccessControlCreateWithFlags(
             nil,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
@@ -129,6 +130,9 @@ final class KeychainManager {
             nil
         ) {
             query[kSecAttrAccessControl as String] = accessControl
+        } else {
+            // Fallback if access control creation fails
+            query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         }
 
         let status = SecItemAdd(query as CFDictionary, nil)

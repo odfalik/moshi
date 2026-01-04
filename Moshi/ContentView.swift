@@ -8,6 +8,7 @@ struct ContentView: View {
 
     @State private var selectedTab: ContentTab = .hosts
     @State private var showingQuickConnect = false
+    @State private var showingAddHost = false
     @State private var showingSettings = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
 
@@ -27,6 +28,11 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingQuickConnect) {
             QuickConnectView()
+        }
+        .sheet(isPresented: $showingAddHost) {
+            NavigationStack {
+                HostEditView(host: nil)
+            }
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView()
@@ -134,7 +140,7 @@ struct ContentView: View {
                 }
 
                 Button {
-                    // Add new host
+                    showingAddHost = true
                 } label: {
                     Label("Add Host", systemImage: "plus")
                 }

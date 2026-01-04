@@ -41,7 +41,9 @@ struct TerminalView: View {
                 HiddenInput(
                     text: $inputText,
                     isFocused: $isInputFocused,
-                    onSubmit: { sendInput() },
+                    onTextInput: { text in
+                        session.sendInput(text)
+                    },
                     onSpecialKey: { key in
                         session.sendSpecialKey(key)
                     }
@@ -122,13 +124,7 @@ struct TerminalView: View {
         }
     }
 
-    // MARK: - Input Handling
-
-    private func sendInput() {
-        guard !inputText.isEmpty else { return }
-        session.sendInput(inputText)
-        inputText = ""
-    }
+    // MARK: - Gesture Handling
 
     private func handleSwipe(_ gesture: DragGesture.Value) {
         let horizontal = gesture.translation.width
@@ -254,7 +250,7 @@ struct TmuxWindowTab: View {
 struct HiddenInput: UIViewRepresentable {
     @Binding var text: String
     @FocusState.Binding var isFocused: Bool
-    let onSubmit: () -> Void
+    let onTextInput: (String) -> Void
     let onSpecialKey: (SpecialKey) -> Void
 
     func makeUIView(context: Context) -> UITextField {
@@ -269,13 +265,22 @@ struct HiddenInput: UIViewRepresentable {
         textField.keyboardType = .asciiCapable
         textField.returnKeyType = .default
         textField.onSpecialKey = onSpecialKey
+
+        // Become first responder on next run loop to ensure view is in hierarchy
+        DispatchQueue.main.async {
+            textField.becomeFirstResponder()
+        }
+
         return textField
     }
 
     func updateUIView(_ uiView: UITextField, context: Context) {
         uiView.text = text
+        // Always try to become first responder when focused
         if isFocused && !uiView.isFirstResponder {
-            uiView.becomeFirstResponder()
+            DispatchQueue.main.async {
+                uiView.becomeFirstResponder()
+            }
         }
     }
 
@@ -292,15 +297,16 @@ struct HiddenInput: UIViewRepresentable {
 
         func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
             if !string.isEmpty {
-                parent.text = string
-                parent.onSubmit()
+                // Send the text directly instead of relying on binding update
+                parent.onTextInput(string)
                 return false
             }
             return true
         }
 
         func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-            parent.onSpecialKey(.ctrlC) // Enter sends newline
+            // Enter key sends newline/carriage return
+            parent.onTextInput("\r")
             return false
         }
     }

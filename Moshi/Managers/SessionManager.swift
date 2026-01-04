@@ -135,7 +135,7 @@ final class SessionManager: ObservableObject {
             port: port,
             username: username,
             authMethod: .password,
-            useMosh: true,
+            useMosh: false,  // Mosh not implemented yet
             autoTmux: true
         )
     }

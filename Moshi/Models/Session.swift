@@ -7,8 +7,13 @@ final class Session: Identifiable, ObservableObject {
     let host: Host
     let createdAt: Date
 
+    /// Unique tmux session name for this Session instance
+    /// Format: moshi-<short-uuid> (e.g., "moshi-a1b2c3d4")
+    let tmuxSessionName: String
+
     @Published var state: ConnectionState = .disconnected
     @Published var tmuxSession: TmuxSession?
+    @Published var tmuxStatus: TmuxStatus = .unknown
     @Published var terminalOutput: String = ""
     @Published var cursorPosition: CursorPosition = CursorPosition()
     @Published var scrollbackLines: [TerminalLine] = []
@@ -17,13 +22,16 @@ final class Session: Identifiable, ObservableObject {
     private var connection: SSHConnection?
     private var moshClient: MoshClient?
     private var cancellables = Set<AnyCancellable>()
+    private var tmuxIntegration: TmuxIntegration?
 
     weak var delegate: SessionDelegate?
 
-    init(host: Host) {
+    init(host: Host, existingTmuxSessionName: String? = nil) {
         self.id = UUID()
         self.host = host
         self.createdAt = Date()
+        // Use existing name (for reconnection) or generate unique name
+        self.tmuxSessionName = existingTmuxSessionName ?? "moshi-\(id.uuidString.prefix(8).lowercased())"
     }
 
     // MARK: - Connection Management
@@ -49,10 +57,25 @@ final class Session: Identifiable, ObservableObject {
             if host.autoTmux {
                 do {
                     try await attachOrCreateTmuxSession()
+                    await MainActor.run {
+                        tmuxStatus = .attached
+                    }
+                } catch let error as TmuxError where error == .notInstalled {
+                    // Tmux not installed - mark status but keep connection
+                    await MainActor.run {
+                        tmuxStatus = .notInstalled
+                    }
+                    Logger.session.info("Tmux not installed on server, continuing without session persistence")
                 } catch {
-                    // Log tmux error but keep connection alive
+                    // Other tmux error - mark as failed but keep connection
+                    await MainActor.run {
+                        tmuxStatus = .failed(error.localizedDescription)
+                    }
                     Logger.session.warning("Tmux auto-attach failed: \(error.localizedDescription)")
-                    // Connection is still usable without tmux
+                }
+            } else {
+                await MainActor.run {
+                    tmuxStatus = .disabled
                 }
             }
 
@@ -87,24 +110,28 @@ final class Session: Identifiable, ObservableObject {
     }
 
     private func attachOrCreateTmuxSession() async throws {
-        let tmuxIntegration = TmuxIntegration(session: self)
-        let sessions = try await tmuxIntegration.listSessions()
+        let integration = TmuxIntegration(session: self)
+        self.tmuxIntegration = integration
+        let sessions = try await integration.listSessions()
 
-        let targetSession = host.effectiveTmuxSessionName
-
-        if let existing = sessions.first(where: { $0.name == targetSession }) {
-            try await tmuxIntegration.attachSession(existing)
+        // Look for our specific tmux session (unique to this Session instance)
+        if let existing = sessions.first(where: { $0.name == tmuxSessionName }) {
+            // Found our session - reattach to it
+            try await integration.attachSession(existing)
             await MainActor.run {
                 tmuxSession = existing
             }
         } else {
-            let newSession = try await tmuxIntegration.createSession(name: targetSession)
+            // Our session doesn't exist - create it
+            let newSession = try await integration.createSession(name: tmuxSessionName)
             await MainActor.run {
                 tmuxSession = newSession
             }
         }
     }
 
+    /// Disconnect from the session but keep the tmux session alive on server
+    /// The session can be reconnected later to resume work
     func disconnect() {
         state = .disconnecting
 
@@ -124,6 +151,50 @@ final class Session: Identifiable, ObservableObject {
                 moshClient = nil
             }
         }
+    }
+
+    /// Close the session completely, killing the tmux session on the server
+    /// This is a permanent action - the session state will be lost
+    func close() async {
+        await MainActor.run {
+            state = .disconnecting
+        }
+
+        // Kill the tmux session on the server (if connected and have tmux)
+        if state == .connected || connection != nil, tmuxSession != nil {
+            let integration = TmuxIntegration(session: self)
+            do {
+                try await integration.killSession(tmuxSession!)
+            } catch {
+                Logger.session.warning("Failed to kill tmux session: \(error.localizedDescription)")
+            }
+        }
+
+        // Close the SSH connection
+        connection?.disconnect()
+        moshClient?.disconnect()
+
+        await MainActor.run {
+            state = .disconnected
+            connection = nil
+            moshClient = nil
+            tmuxSession = nil
+            tmuxStatus = .unknown
+        }
+    }
+
+    /// Reconnect to the session, reattaching to the existing tmux session
+    func reconnect() async throws {
+        guard state == .disconnected else {
+            throw SessionError.invalidState("Cannot reconnect: session is not disconnected")
+        }
+
+        // Clear previous terminal output for fresh display
+        await MainActor.run {
+            terminalOutput = ""
+        }
+
+        try await connect()
     }
 
     // MARK: - Terminal I/O
@@ -174,6 +245,9 @@ final class Session: Identifiable, ObservableObject {
 
 extension Session: SSHConnectionDelegate {
     func connectionDidReceiveOutput(_ output: String) {
+        // Forward output to tmux integration for marker parsing
+        tmuxIntegration?.processOutput(output)
+
         Task { @MainActor in
             terminalOutput += output
             lastActivity = Date()
@@ -222,6 +296,9 @@ extension Session: SSHConnectionDelegate {
 
 extension Session: MoshClientDelegate {
     func moshDidReceiveOutput(_ output: String) {
+        // Forward output to tmux integration for marker parsing
+        tmuxIntegration?.processOutput(output)
+
         Task { @MainActor in
             terminalOutput += output
             lastActivity = Date()
@@ -418,5 +495,65 @@ struct TmuxPane: Identifiable, Codable {
         self.height = height
         self.isActive = isActive
         self.currentCommand = currentCommand
+    }
+}
+
+// MARK: - Tmux Status
+
+enum TmuxStatus: Equatable {
+    case unknown
+    case disabled
+    case attached
+    case notInstalled
+    case failed(String)
+
+    var isProtected: Bool {
+        self == .attached
+    }
+
+    var icon: String {
+        switch self {
+        case .unknown: return "questionmark.circle"
+        case .disabled: return "xmark.circle"
+        case .attached: return "checkmark.shield"
+        case .notInstalled: return "exclamationmark.triangle"
+        case .failed: return "exclamationmark.circle"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .unknown: return .secondary
+        case .disabled: return .secondary
+        case .attached: return .green
+        case .notInstalled: return .orange
+        case .failed: return .red
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .unknown: return "Checking tmux..."
+        case .disabled: return "Session persistence disabled"
+        case .attached: return "Session protected by tmux"
+        case .notInstalled: return "Install tmux for session persistence"
+        case .failed(let reason): return "Tmux error: \(reason)"
+        }
+    }
+}
+
+// MARK: - Session Error
+
+enum SessionError: LocalizedError {
+    case invalidState(String)
+    case connectionFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidState(let message):
+            return "Invalid session state: \(message)"
+        case .connectionFailed(let message):
+            return "Connection failed: \(message)"
+        }
     }
 }

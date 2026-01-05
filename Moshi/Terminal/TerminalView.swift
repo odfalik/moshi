@@ -95,7 +95,7 @@ struct TerminalView: View {
     @ToolbarContentBuilder
     private var terminalToolbar: some ToolbarContent {
         ToolbarItem(placement: .principal) {
-            ConnectionStatusView(state: session.state)
+            ConnectionStatusView(state: session.state, tmuxStatus: session.tmuxStatus)
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
@@ -133,7 +133,13 @@ struct TerminalView: View {
                 Button {
                     session.disconnect()
                 } label: {
-                    Label("Disconnect", systemImage: "xmark.circle")
+                    Label("Disconnect", systemImage: "pause.circle")
+                }
+
+                Button(role: .destructive) {
+                    Task { await session.close() }
+                } label: {
+                    Label("Close Session", systemImage: "xmark.circle")
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -190,6 +196,7 @@ struct TerminalView: View {
 
 struct ConnectionStatusView: View {
     let state: ConnectionState
+    var tmuxStatus: TmuxStatus = .unknown
 
     var body: some View {
         HStack(spacing: 6) {
@@ -205,6 +212,16 @@ struct ConnectionStatusView: View {
             Text(state.displayName)
                 .font(.subheadline)
                 .foregroundColor(.secondary)
+
+            // Show tmux status if connected and not unknown/disabled
+            if case .connected = state,
+               tmuxStatus != .unknown && tmuxStatus != .disabled {
+                Divider()
+                    .frame(height: 14)
+                Image(systemName: tmuxStatus.icon)
+                    .font(.caption)
+                    .foregroundColor(tmuxStatus.color)
+            }
         }
     }
 }

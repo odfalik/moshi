@@ -35,7 +35,7 @@ struct Host: Identifiable, Codable, Hashable {
         authMethod: AuthMethod = .password,
         useMosh: Bool = false,  // Mosh not implemented yet
         moshPorts: MoshPortRange = MoshPortRange(),
-        autoTmux: Bool = false,
+        autoTmux: Bool = true,
         tmuxSessionName: String? = nil,
         startupCommand: String? = nil,
         group: String? = nil,

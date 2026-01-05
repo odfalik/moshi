@@ -227,6 +227,7 @@ struct EmptySessionView: View {
 
 struct SessionListView: View {
     @EnvironmentObject var sessionManager: SessionManager
+    @State private var reconnectingSessionId: UUID?
 
     var body: some View {
         Group {
@@ -239,8 +240,15 @@ struct SessionListView: View {
             } else {
                 List {
                     ForEach(sessionManager.activeSessions) { session in
-                        NavigationLink(value: session.id) {
-                            SessionRowView(session: session)
+                        SessionRowView(
+                            session: session,
+                            isReconnecting: reconnectingSessionId == session.id,
+                            onReconnect: {
+                                reconnectSession(session)
+                            }
+                        )
+                        .contextMenu {
+                            sessionContextMenu(for: session)
                         }
                     }
                     .onDelete { indexSet in
@@ -254,35 +262,152 @@ struct SessionListView: View {
         }
         .navigationTitle("Sessions")
     }
+
+    private func reconnectSession(_ session: Session) {
+        reconnectingSessionId = session.id
+        Task {
+            do {
+                try await sessionManager.reconnectSession(session)
+            } catch {
+                Logger.session.error("Reconnect failed: \(error.localizedDescription)")
+            }
+            await MainActor.run {
+                reconnectingSessionId = nil
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sessionContextMenu(for session: Session) -> some View {
+        if session.state == .disconnected {
+            Button {
+                reconnectSession(session)
+            } label: {
+                Label("Reconnect", systemImage: "arrow.clockwise")
+            }
+        } else if session.state == .connected {
+            Button {
+                sessionManager.disconnectSession(session)
+            } label: {
+                Label("Disconnect", systemImage: "pause.circle")
+            }
+        }
+
+        Divider()
+
+        Button(role: .destructive) {
+            sessionManager.closeSession(session)
+        } label: {
+            Label("Close Session", systemImage: "xmark.circle")
+        }
+    }
 }
 
 struct SessionRowView: View {
-    let session: Session
+    @EnvironmentObject var sessionManager: SessionManager
+    @ObservedObject var session: Session
+    var isReconnecting: Bool = false
+    var onReconnect: (() -> Void)?
 
     var body: some View {
+        Group {
+            if session.state == .connected {
+                // Connected sessions navigate to terminal
+                NavigationLink(value: session.id) {
+                    rowContent
+                }
+            } else if session.state == .disconnected {
+                // Disconnected sessions show reconnect button
+                Button {
+                    onReconnect?()
+                } label: {
+                    rowContent
+                }
+                .buttonStyle(.plain)
+            } else {
+                // Other states (connecting, etc.) - just show info
+                rowContent
+            }
+        }
+    }
+
+    private var rowContent: some View {
         HStack {
-            Circle()
-                .fill(session.state.color)
-                .frame(width: 8, height: 8)
+            // Status indicator
+            if isReconnecting || session.state == .connecting {
+                ProgressView()
+                    .scaleEffect(0.7)
+                    .frame(width: 12, height: 12)
+            } else {
+                Circle()
+                    .fill(session.state.color)
+                    .frame(width: 8, height: 8)
+            }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(session.host.displayName)
-                    .font(.headline)
+                HStack(spacing: 6) {
+                    Text(session.host.displayName)
+                        .font(.headline)
+                        .foregroundColor(session.state == .disconnected ? .secondary : .primary)
 
-                Text(session.host.connectionString)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    // Show reconnect hint for disconnected sessions
+                    if session.state == .disconnected && !isReconnecting {
+                        Text("Tap to reconnect")
+                            .font(.caption2)
+                            .foregroundColor(.blue)
+                    }
+                }
+
+                HStack(spacing: 4) {
+                    Text(session.host.connectionString)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    // Tmux session name
+                    if session.tmuxStatus == .attached {
+                        Text("[\(session.tmuxSessionName)]")
+                            .font(.caption2)
+                            .foregroundColor(.green)
+                    }
+
+                    // Tmux status indicator
+                    if session.tmuxStatus != .disabled && session.tmuxStatus != .unknown {
+                        TmuxStatusBadge(status: session.tmuxStatus)
+                    }
+                }
             }
 
             Spacer()
 
-            if session.tmuxSession != nil {
+            // Action indicator
+            if session.state == .disconnected {
+                Image(systemName: "arrow.clockwise.circle")
+                    .foregroundColor(.blue)
+                    .font(.body)
+            } else if session.tmuxSession != nil {
                 Image(systemName: "square.split.2x2")
                     .foregroundColor(.blue)
                     .font(.caption)
             }
         }
         .padding(.vertical, 4)
+        .opacity(session.state == .disconnected ? 0.8 : 1.0)
+    }
+}
+
+struct TmuxStatusBadge: View {
+    let status: TmuxStatus
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Image(systemName: status.icon)
+            if status == .attached {
+                Text("tmux")
+            }
+        }
+        .font(.caption2)
+        .foregroundColor(status.color)
+        .help(status.description)
     }
 }
 

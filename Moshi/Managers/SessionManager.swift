@@ -54,17 +54,36 @@ final class SessionManager: ObservableObject {
         return session
     }
 
+    /// Close the session completely (kills tmux session on server)
     func closeSession(_ session: Session) {
         // End Live Activity
         LiveActivityManager.shared.endActivity(for: session)
 
-        session.disconnect()
+        Task {
+            await session.close()
 
-        activeSessions.removeAll { $0.id == session.id }
+            await MainActor.run {
+                activeSessions.removeAll { $0.id == session.id }
 
-        if currentSessionId == session.id {
-            currentSessionId = activeSessions.first?.id
+                if currentSessionId == session.id {
+                    currentSessionId = activeSessions.first?.id
+                }
+            }
         }
+    }
+
+    /// Disconnect session but keep it in the list for potential reconnection
+    func disconnectSession(_ session: Session) {
+        session.disconnect()
+        // Update Live Activity to show disconnected state
+        LiveActivityManager.shared.updateActivity(for: session)
+    }
+
+    /// Reconnect a disconnected session
+    func reconnectSession(_ session: Session) async throws {
+        try await session.reconnect()
+        // Update Live Activity
+        await LiveActivityManager.shared.updateActivity(for: session)
     }
 
     func closeAllSessions() {
@@ -197,19 +216,11 @@ final class SessionManager: ObservableObject {
         switch state {
         case .error(let message):
             Logger.session.error("Session \(session.id) error: \(message)")
-
             // Could show notification or alert
 
         case .disconnected:
-            // Remove from active sessions after a delay
-            Task {
-                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
-                await MainActor.run {
-                    if session.state == .disconnected {
-                        activeSessions.removeAll { $0.id == session.id }
-                    }
-                }
-            }
+            // Keep disconnected sessions in the list - user can reconnect or close
+            Logger.session.info("Session \(session.id) disconnected")
 
         default:
             break
@@ -272,11 +283,22 @@ extension SessionManager {
         activeSessions.filter { $0.state == .connected }.count
     }
 
-    func session(for host: Host) -> Session? {
-        activeSessions.first { $0.host.id == host.id }
+    var disconnectedSessionCount: Int {
+        activeSessions.filter { $0.state == .disconnected }.count
     }
 
+    /// Get all sessions for a specific host (supports multiple sessions per host)
+    func sessions(for host: Host) -> [Session] {
+        activeSessions.filter { $0.host.id == host.id }
+    }
+
+    /// Check if any session is connected to this host
     func isConnected(to host: Host) -> Bool {
-        session(for: host)?.state == .connected
+        sessions(for: host).contains { $0.state == .connected }
+    }
+
+    /// Check if there's a disconnected session to this host that can be reconnected
+    func hasDisconnectedSession(for host: Host) -> Bool {
+        sessions(for: host).contains { $0.state == .disconnected }
     }
 }

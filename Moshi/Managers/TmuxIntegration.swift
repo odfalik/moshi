@@ -4,6 +4,7 @@ import Combine
 final class TmuxIntegration {
     private weak var session: Session?
     private var pendingCommands: [String: CheckedContinuation<String, Error>] = [:]
+    private var outputBuffer: String = ""
 
     static let detachCommand = "tmux detach"
     static let defaultSessionName = "moshi"
@@ -24,6 +25,12 @@ final class TmuxIntegration {
     func listSessions() async throws -> [TmuxSession] {
         let output = try await executeCommand("tmux list-sessions -F '#{session_id}:#{session_name}:#{session_windows}:#{session_attached}:#{session_created}'")
 
+        // Check if tmux is not installed
+        let lowercased = output.lowercased()
+        if lowercased.contains("command not found") || lowercased.contains("not found: tmux") {
+            throw TmuxError.notInstalled
+        }
+
         guard !output.contains("no server running") && !output.contains("no sessions") else {
             return []
         }
@@ -34,8 +41,13 @@ final class TmuxIntegration {
                 let parts = line.components(separatedBy: ":")
                 guard parts.count >= 5 else { return nil }
 
+                // Session IDs from tmux start with $ (e.g., $0, $1)
+                // Skip lines that don't have a valid session ID (like command echoes)
+                let sessionId = parts[0]
+                guard sessionId.hasPrefix("$") else { return nil }
+
                 return TmuxSession(
-                    id: parts[0],
+                    id: sessionId,
                     name: parts[1],
                     windows: [],
                     activeWindowIndex: 0,
@@ -76,6 +88,40 @@ final class TmuxIntegration {
 
     func renameSession(_ tmuxSession: TmuxSession, to newName: String) async throws {
         _ = try await executeCommand("tmux rename-session -t '\(shellEscape(tmuxSession.name))' '\(shellEscape(newName))'")
+    }
+
+    // MARK: - Session Cleanup
+
+    /// List all moshi-* sessions (orphaned sessions from previous app runs)
+    func listMoshiSessions() async throws -> [TmuxSession] {
+        let allSessions = try await listSessions()
+        return allSessions.filter { $0.name.hasPrefix("moshi-") }
+    }
+
+    /// Kill all unattached moshi-* sessions (cleanup orphaned sessions)
+    func cleanupOrphanedSessions() async throws -> Int {
+        let moshiSessions = try await listMoshiSessions()
+        var killedCount = 0
+
+        for tmuxSession in moshiSessions {
+            // Only kill unattached sessions
+            if !tmuxSession.attached {
+                do {
+                    try await killSession(tmuxSession)
+                    killedCount += 1
+                } catch {
+                    // Continue with other sessions even if one fails
+                    continue
+                }
+            }
+        }
+
+        return killedCount
+    }
+
+    /// Kill a specific session by name
+    func killSessionByName(_ name: String) async throws {
+        _ = try await executeCommand("tmux kill-session -t '\(shellEscape(name))'")
     }
 
     // MARK: - Window Management
@@ -247,24 +293,42 @@ final class TmuxIntegration {
     }
 
     func processOutput(_ output: String) {
-        // Look for our markers in the output
+        // Accumulate output in buffer (output may arrive in chunks)
+        outputBuffer += output
+
+        // Look for our markers in the accumulated buffer
         let pattern = "MOSHI_MARKER:([^:]+):([0-9]+)"
 
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
 
-        let range = NSRange(output.startIndex..., in: output)
-        let matches = regex.matches(in: output, range: range)
+        let range = NSRange(outputBuffer.startIndex..., in: outputBuffer)
+        let matches = regex.matches(in: outputBuffer, range: range)
 
         for match in matches {
-            guard let markerRange = Range(match.range(at: 1), in: output),
-                  let exitCodeRange = Range(match.range(at: 2), in: output) else { continue }
+            guard let markerRange = Range(match.range(at: 1), in: outputBuffer),
+                  let fullMatchRange = Range(match.range, in: outputBuffer) else { continue }
 
-            let marker = String(output[markerRange])
+            let marker = String(outputBuffer[markerRange])
 
             if let continuation = pendingCommands.removeValue(forKey: marker) {
-                // Extract output before the marker
-                let outputEnd = output.range(of: "MOSHI_MARKER:\(marker)")?.lowerBound ?? output.endIndex
-                let commandOutput = String(output[..<outputEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+                // Extract output before the marker from the buffer
+                let outputEnd = outputBuffer.range(of: "MOSHI_MARKER:\(marker)")?.lowerBound ?? outputBuffer.endIndex
+                let commandOutput = String(outputBuffer[..<outputEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+                // Clear processed output from buffer (everything up to and including the marker)
+                if let clearEnd = outputBuffer.range(of: "MOSHI_MARKER:\(marker):")?.upperBound {
+                    // Also skip the exit code digits and newline
+                    var idx = clearEnd
+                    while idx < outputBuffer.endIndex && outputBuffer[idx].isNumber {
+                        idx = outputBuffer.index(after: idx)
+                    }
+                    if idx < outputBuffer.endIndex && outputBuffer[idx].isNewline {
+                        idx = outputBuffer.index(after: idx)
+                    }
+                    outputBuffer = String(outputBuffer[idx...])
+                } else {
+                    outputBuffer = ""
+                }
 
                 continuation.resume(returning: commandOutput)
             }
@@ -286,9 +350,10 @@ enum TmuxLayout: String, CaseIterable {
     case tiled = "tiled"
 }
 
-enum TmuxError: LocalizedError {
+enum TmuxError: LocalizedError, Equatable {
     case timeout
     case notAttached
+    case notInstalled
     case commandFailed(String)
 
     var errorDescription: String? {
@@ -297,6 +362,8 @@ enum TmuxError: LocalizedError {
             return "Tmux command timed out"
         case .notAttached:
             return "Not attached to a tmux session"
+        case .notInstalled:
+            return "Tmux is not installed on this server"
         case .commandFailed(let message):
             return "Tmux command failed: \(message)"
         }

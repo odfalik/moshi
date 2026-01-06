@@ -84,6 +84,14 @@ final class TmuxIntegration {
         session?.sendCommand("tmux attach-session -t '\(shellEscape(tmuxSession.name))'")
     }
 
+    /// Capture the current pane content including scrollback history
+    /// Call this before attaching to restore previous terminal output
+    func capturePaneContent(sessionName: String, lines: Int = 2000) async throws -> String {
+        // capture-pane -p prints to stdout, -S specifies start line (negative = scrollback)
+        let output = try await executeCommand("tmux capture-pane -t '\(shellEscape(sessionName))' -p -S -\(lines)")
+        return output
+    }
+
     func killSession(_ tmuxSession: TmuxSession) async throws {
         _ = try await executeCommand("tmux kill-session -t '\(shellEscape(tmuxSession.name))'")
     }

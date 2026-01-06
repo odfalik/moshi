@@ -7,6 +7,9 @@ final class Session: Identifiable, ObservableObject {
     let host: Host
     let createdAt: Date
 
+    /// User-facing name for this session (e.g., "Claude - Moshi Project")
+    @Published var name: String
+
     /// Unique tmux session name for this Session instance
     /// Format: moshi-<short-uuid> (e.g., "moshi-a1b2c3d4")
     let tmuxSessionName: String
@@ -26,12 +29,14 @@ final class Session: Identifiable, ObservableObject {
 
     weak var delegate: SessionDelegate?
 
-    init(host: Host, existingTmuxSessionName: String? = nil) {
-        self.id = UUID()
+    init(host: Host, name: String? = nil, existingTmuxSessionName: String? = nil, existingId: UUID? = nil) {
+        self.id = existingId ?? UUID()
         self.host = host
         self.createdAt = Date()
-        // Use existing name (for reconnection) or generate unique name
-        self.tmuxSessionName = existingTmuxSessionName ?? "moshi-\(id.uuidString.prefix(8).lowercased())"
+        // User-facing name defaults to host display name
+        self.name = name ?? host.displayName
+        // Use existing tmux session name (for reconnection) or generate unique name
+        self.tmuxSessionName = existingTmuxSessionName ?? "moshi-\(self.id.uuidString.prefix(8).lowercased())"
     }
 
     // MARK: - Connection Management
@@ -112,21 +117,41 @@ final class Session: Identifiable, ObservableObject {
     private func attachOrCreateTmuxSession() async throws {
         let integration = TmuxIntegration(session: self)
         self.tmuxIntegration = integration
+
+        Logger.session.info("Looking for tmux session: \(tmuxSessionName)")
         let sessions = try await integration.listSessions()
+        Logger.session.info("Found \(sessions.count) tmux sessions: \(sessions.map { $0.name })")
 
         // Look for our specific tmux session (unique to this Session instance)
         if let existing = sessions.first(where: { $0.name == tmuxSessionName }) {
-            // Found our session - reattach to it
+            // Found our session - capture scrollback before attaching
+            do {
+                let scrollback = try await integration.capturePaneContent(sessionName: tmuxSessionName)
+                await MainActor.run {
+                    // Prepend scrollback to terminal output
+                    if !scrollback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        terminalOutput = scrollback
+                    }
+                }
+            } catch {
+                Logger.session.warning("Failed to capture scrollback: \(error.localizedDescription)")
+            }
+
+            // Reattach to existing session
             try await integration.attachSession(existing)
             await MainActor.run {
                 tmuxSession = existing
             }
+            Logger.session.info("Reattached to existing tmux session: \(tmuxSessionName)")
         } else {
-            // Our session doesn't exist - create it
+            // Our session doesn't exist (e.g., host rebooted) - create fresh
             let newSession = try await integration.createSession(name: tmuxSessionName)
             await MainActor.run {
                 tmuxSession = newSession
+                // Notify user that previous session was lost
+                terminalOutput = "⚠️ Previous tmux session not found (host may have rebooted).\n   Started fresh session: \(tmuxSessionName)\n\n"
             }
+            Logger.session.info("Created new tmux session (previous not found): \(tmuxSessionName)")
         }
     }
 
@@ -189,11 +214,7 @@ final class Session: Identifiable, ObservableObject {
             throw SessionError.invalidState("Cannot reconnect: session is not disconnected")
         }
 
-        // Clear previous terminal output for fresh display
-        await MainActor.run {
-            terminalOutput = ""
-        }
-
+        // Don't clear terminalOutput - we'll restore scrollback from tmux
         try await connect()
     }
 

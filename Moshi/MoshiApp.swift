@@ -19,6 +19,12 @@ struct MoshiApp: App {
                 .environmentObject(appSettings)
                 .environmentObject(networkMonitor)
                 .preferredColorScheme(appSettings.colorScheme)
+                .task {
+                    // Restore persisted sessions after managers are ready
+                    await MainActor.run {
+                        sessionManager.initialize(hostManager: hostManager)
+                    }
+                }
         }
     }
 

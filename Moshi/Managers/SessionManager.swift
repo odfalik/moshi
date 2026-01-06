@@ -22,16 +22,24 @@ final class SessionManager: ObservableObject {
 
     private init() {
         loadRecentConnections()
+        // Note: restoreSessions() must be called after HostManager is ready
+        // This is done in the app's onAppear or scene delegate
+    }
+
+    /// Call this after HostManager is initialized to restore persisted sessions
+    func initialize(hostManager: HostManager) {
+        restoreSessions(hostManager: hostManager)
     }
 
     // MARK: - Session Lifecycle
 
-    func createSession(for host: Host) async throws -> Session {
-        let session = Session(host: host)
+    func createSession(for host: Host, name: String? = nil) async throws -> Session {
+        let session = Session(host: host, name: name)
 
         await MainActor.run {
             activeSessions.append(session)
             currentSessionId = session.id
+            saveSessionState()  // Persist immediately
         }
 
         // Start Live Activity
@@ -54,7 +62,7 @@ final class SessionManager: ObservableObject {
         return session
     }
 
-    /// Close the session completely (kills tmux session on server)
+    /// Close the session completely (kills tmux session on server and removes from list)
     func closeSession(_ session: Session) {
         // End Live Activity
         LiveActivityManager.shared.endActivity(for: session)
@@ -68,6 +76,8 @@ final class SessionManager: ObservableObject {
                 if currentSessionId == session.id {
                     currentSessionId = activeSessions.first?.id
                 }
+
+                saveSessionState()  // Persist the removal
             }
         }
     }
@@ -227,49 +237,89 @@ final class SessionManager: ObservableObject {
         }
     }
 
-    // MARK: - Session Restoration
+    // MARK: - Session Persistence
 
     func saveSessionState() {
         let sessionStates = activeSessions.map { session -> SavedSessionState in
             SavedSessionState(
+                id: session.id,
                 hostId: session.host.id,
-                tmuxSessionName: session.tmuxSession?.name
+                name: session.name,
+                tmuxSessionName: session.tmuxSessionName,
+                createdAt: session.createdAt
             )
         }
 
         if let data = try? JSONEncoder().encode(sessionStates) {
             UserDefaults.standard.set(data, forKey: "savedSessions")
         }
+        Logger.session.debug("Saved \(sessionStates.count) sessions to storage")
     }
 
-    func restoreSessions(hostManager: HostManager) async {
+    /// Restore sessions from storage as disconnected (doesn't auto-connect)
+    func restoreSessions(hostManager: HostManager) {
         guard let data = UserDefaults.standard.data(forKey: "savedSessions"),
               let states = try? JSONDecoder().decode([SavedSessionState].self, from: data) else {
             return
         }
 
         for state in states {
-            if let host = hostManager.hosts.first(where: { $0.id == state.hostId }) {
-                var restoredHost = host
-                if let tmuxName = state.tmuxSessionName {
-                    restoredHost.tmuxSessionName = tmuxName
-                }
+            // Find the host for this session
+            guard let host = hostManager.hosts.first(where: { $0.id == state.hostId }) else {
+                Logger.session.warning("Cannot restore session '\(state.name)': host not found")
+                continue
+            }
 
-                do {
-                    _ = try await createSession(for: restoredHost)
-                } catch {
-                    Logger.session.error("Failed to restore session: \(error.localizedDescription)")
-                }
+            // Create session in disconnected state (don't connect yet)
+            let session = Session(
+                host: host,
+                name: state.name,
+                existingTmuxSessionName: state.tmuxSessionName,
+                existingId: state.id
+            )
+            // Session starts in .disconnected state by default
+            activeSessions.append(session)
+            Logger.session.info("Restored session '\(state.name)' (disconnected)")
+        }
+
+        // Select first session if any
+        if currentSessionId == nil, let first = activeSessions.first {
+            currentSessionId = first.id
+        }
+    }
+
+    /// Delete a session permanently (removes from storage)
+    func deleteSession(_ session: Session) {
+        // End Live Activity
+        LiveActivityManager.shared.endActivity(for: session)
+
+        // If connected, close properly
+        if session.state == .connected {
+            Task {
+                await session.close()
             }
         }
+
+        // Remove from list
+        activeSessions.removeAll { $0.id == session.id }
+
+        if currentSessionId == session.id {
+            currentSessionId = activeSessions.first?.id
+        }
+
+        // Persist the change
+        saveSessionState()
     }
 }
 
 // MARK: - Saved Session State
 
-struct SavedSessionState: Codable {
+struct SavedSessionState: Codable, Identifiable {
+    let id: UUID
     let hostId: UUID
-    let tmuxSessionName: String?
+    let name: String
+    let tmuxSessionName: String
+    let createdAt: Date
 }
 
 // MARK: - Session Manager Extensions

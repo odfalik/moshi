@@ -90,6 +90,12 @@ struct TerminalView: View {
             .onChange(of: geometry.size) { _, newSize in
                 updateTerminalSize(newSize)
             }
+            .onChange(of: keyboardObserver.isKeyboardVisible) { _, _ in
+                updateTerminalSize(geometry.size)
+            }
+            .onChange(of: keyboardObserver.keyboardHeight) { _, _ in
+                updateTerminalSize(geometry.size)
+            }
             .onChange(of: session.state) { _, newState in
                 // Re-send terminal size when connection is established
                 if case .connected = newState {
@@ -197,12 +203,14 @@ struct TerminalView: View {
         let charWidth = appSettings.terminalFont.characterWidth
         let charHeight = appSettings.terminalFont.lineHeight
 
-        // Account for UI elements within the VStack
-        // Note: Macro keyboard is now inputAccessoryView, handled by iOS keyboard system
+        // Account for UI elements
         let tmuxBarHeight: CGFloat = showingTmuxBar ? 30 : 0
+        // Only subtract macro keyboard height (72px) when keyboard is visible
+        // The iOS keyboard height is handled by ignoresSafeArea(.keyboard) + our overlay positioning
+        let overlayHeight: CGFloat = (showingMacroKeyboard && keyboardObserver.isKeyboardVisible) ? 72 : 0
 
         let availableWidth = size.width - 8  // Small horizontal padding
-        let availableHeight = size.height - tmuxBarHeight
+        let availableHeight = size.height - tmuxBarHeight - overlayHeight
 
         let cols = max(20, Int(availableWidth / charWidth))
         let rows = max(5, Int(availableHeight / charHeight))

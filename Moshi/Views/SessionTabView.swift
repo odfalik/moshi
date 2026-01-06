@@ -97,11 +97,15 @@ struct SessionTabBar: View {
 
 struct SessionTab: View {
     @ObservedObject var session: Session
+    @EnvironmentObject var sessionManager: SessionManager
     let isSelected: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
 
     @State private var isHovering = false
+    @State private var isReconnecting = false
+    @State private var showingRename = false
+    @State private var newName = ""
 
     var body: some View {
         HStack(spacing: 6) {
@@ -110,10 +114,28 @@ struct SessionTab: View {
                 .fill(session.state.color)
                 .frame(width: 6, height: 6)
 
-            // Host name
-            Text(session.host.displayName)
+            // Session name (user-defined)
+            Text(session.name)
                 .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
                 .lineLimit(1)
+                .opacity(session.state == .disconnected ? 0.6 : 1)
+
+            // Reconnect button for disconnected sessions
+            if session.state == .disconnected {
+                Button {
+                    reconnect()
+                } label: {
+                    if isReconnecting {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10))
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.accentColor)
+            }
 
             // Tmux indicator
             if session.tmuxSession != nil {
@@ -135,30 +157,66 @@ struct SessionTab: View {
         .padding(.vertical, 6)
         .background(isSelected ? Color(.systemGray5) : Color.clear)
         .cornerRadius(6)
-        .onTapGesture(perform: onSelect)
+        .onTapGesture {
+            if session.state == .disconnected {
+                reconnect()
+            } else {
+                onSelect()
+            }
+        }
         .onHover { hovering in
             isHovering = hovering
         }
         .contextMenu {
-            Button {
-                // Duplicate session
-            } label: {
-                Label("Duplicate", systemImage: "plus.square.on.square")
+            if session.state == .disconnected {
+                Button {
+                    reconnect()
+                } label: {
+                    Label("Connect", systemImage: "arrow.clockwise")
+                }
+            } else {
+                Button {
+                    sessionManager.disconnectSession(session)
+                } label: {
+                    Label("Disconnect", systemImage: "pause.circle")
+                }
             }
 
             Button {
-                // Reconnect
-                Task {
-                    try? await session.connect()
-                }
+                newName = session.name
+                showingRename = true
             } label: {
-                Label("Reconnect", systemImage: "arrow.clockwise")
+                Label("Rename", systemImage: "pencil")
             }
 
             Divider()
 
             Button(role: .destructive, action: onClose) {
-                Label("Close", systemImage: "xmark")
+                Label("Delete Session", systemImage: "trash")
+            }
+        }
+        .alert("Rename Session", isPresented: $showingRename) {
+            TextField("Session name", text: $newName)
+            Button("Cancel", role: .cancel) {}
+            Button("Rename") {
+                if !newName.isEmpty {
+                    session.name = newName
+                    sessionManager.saveSessionState()
+                }
+            }
+        }
+    }
+
+    private func reconnect() {
+        isReconnecting = true
+        Task {
+            do {
+                try await sessionManager.reconnectSession(session)
+            } catch {
+                Logger.session.error("Reconnect failed: \(error.localizedDescription)")
+            }
+            await MainActor.run {
+                isReconnecting = false
             }
         }
     }

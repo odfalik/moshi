@@ -9,7 +9,6 @@ struct TerminalView: View {
     @State private var showingMacroKeyboard = true
     @State private var showingTmuxBar = true
     @State private var inputText = ""
-    @State private var keyboardHeight: CGFloat = 0
     @State private var lastProcessedLength: Int = 0
     @State private var terminalHeight: CGFloat = 0
 
@@ -38,6 +37,8 @@ struct TerminalView: View {
                         }
                 )
 
+                Spacer(minLength: 0)
+
                 // Hidden text input for keyboard
                 HiddenInput(
                     text: $inputText,
@@ -50,13 +51,14 @@ struct TerminalView: View {
                 )
                 .frame(height: 0)
 
-                // Macro keyboard bar
+                // Macro keyboard at bottom of content
                 if showingMacroKeyboard {
                     MacroKeyboard(session: session)
-                        .transition(.move(edge: .bottom))
+                        .background(Color(.systemGray6))
                 }
             }
             .background(appSettings.currentTheme.swiftUIBackground)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
             .onChange(of: session.terminalOutput) { _, newOutput in
                 // Only process new content, not the entire buffer
                 if newOutput.count > lastProcessedLength {
@@ -88,24 +90,6 @@ struct TerminalView: View {
             }
             .toolbar {
                 terminalToolbar
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { notification in
-                if let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect {
-                    // Get the keyboard height relative to the view, accounting for safe area
-                    let screenHeight = UIScreen.main.bounds.height
-                    let keyboardTop = screenHeight - frame.height
-                    // Only count the part of keyboard that overlaps with our view area
-                    let safeAreaBottom = UIApplication.shared.connectedScenes
-                        .compactMap { $0 as? UIWindowScene }
-                        .first?.windows.first?.safeAreaInsets.bottom ?? 0
-                    keyboardHeight = max(0, frame.height - safeAreaBottom)
-                    Logger.terminal.debug("Keyboard shown: frame=\(frame.height), adjusted=\(keyboardHeight)")
-                    updateTerminalSize(geometry.size)
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-                keyboardHeight = 0
-                updateTerminalSize(geometry.size)
             }
         }
     }
@@ -195,9 +179,8 @@ struct TerminalView: View {
         let charHeight = appSettings.terminalFont.lineHeight
 
         // Account for UI elements within the VStack
-        // Note: Do NOT subtract keyboardHeight - SwiftUI already adjusts geometry.size for keyboard
-        let macroKeyboardHeight: CGFloat = showingMacroKeyboard ? 120 : 0
         let tmuxBarHeight: CGFloat = showingTmuxBar ? 30 : 0
+        let macroKeyboardHeight: CGFloat = showingMacroKeyboard ? 76 : 0
 
         let availableWidth = size.width - 8  // Small horizontal padding
         let availableHeight = size.height - tmuxBarHeight - macroKeyboardHeight
@@ -328,6 +311,10 @@ struct HiddenInput: UIViewRepresentable {
         textField.smartInsertDeleteType = .no
         textField.keyboardType = .asciiCapable
         textField.returnKeyType = .default
+        // Disable inline predictions (iOS 17+)
+        if #available(iOS 17.0, *) {
+            textField.inlinePredictionType = .no
+        }
         textField.onSpecialKey = onSpecialKey
         textField.onTextInput = onTextInput
 

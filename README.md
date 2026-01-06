@@ -2,7 +2,7 @@
 
 A modern, feature-rich terminal client for iOS with native Mosh support, tmux integration, and an ergonomic macro keyboard designed for developers.
 
-![CI](https://github.com/YOUR_USERNAME/moshi/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/odfalik/moshi/actions/workflows/ci.yml/badge.svg)
 
 ## Features
 
@@ -53,7 +53,7 @@ Ergonomically designed keyboard rows for efficient terminal use:
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/YOUR_USERNAME/moshi.git
+git clone https://github.com/odfalik/moshi.git
 cd moshi
 ```
 
@@ -150,6 +150,22 @@ Contributions are welcome! Please:
 3. Make your changes
 4. Add tests for new functionality
 5. Submit a pull request
+
+### Development with Claude Code
+
+If you're using [Claude Code](https://claude.ai/download) for development, the [ios-simulator-mcp](https://github.com/joshuayoes/ios-simulator-mcp) server is helpful for testing UI changes directly in the iOS Simulator. Create a `.mcp.json` in the project root:
+
+```json
+{
+  "mcpServers": {
+    "ios-simulator": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "ios-simulator-mcp"]
+    }
+  }
+}
+```
 
 ## License
 

@@ -53,6 +53,9 @@ test-results.xml
 *.pem
 Secrets/
 
+# Claude Code config (user-specific)
+.mcp.json
+
 # Temporary files
 *.log
 *.tmp

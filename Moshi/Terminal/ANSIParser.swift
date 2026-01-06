@@ -42,6 +42,7 @@ final class ANSIParser {
         case csi
         case osc
         case oscString
+        case charsetDesignation
     }
 
     private var state: State = .ground
@@ -109,6 +110,16 @@ final class ANSIParser {
                     tokens.append(.escape(.sgr([0])))
                     state = .ground
 
+                case "(", ")":
+                    // Character set designation - ESC ( X or ESC ) X
+                    // We need to consume the next character (the charset identifier)
+                    // For now, just ignore these sequences by entering a special state
+                    state = .charsetDesignation
+
+                case "=", ">":
+                    // Application/Normal keypad mode - ignore
+                    state = .ground
+
                 default:
                     // Unknown escape sequence - go back to ground and re-process this character
                     state = .ground
@@ -169,6 +180,11 @@ final class ANSIParser {
                 } else {
                     oscString.append(char)
                 }
+
+            case .charsetDesignation:
+                // Just consume the charset identifier character (B, 0, etc.) and go back to ground
+                // We don't actually need to change character sets since we use Unicode
+                state = .ground
             }
         }
 

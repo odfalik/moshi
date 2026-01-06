@@ -4,7 +4,9 @@ import Combine
 final class TmuxIntegration {
     private weak var session: Session?
     private var pendingCommands: [String: CheckedContinuation<String, Error>] = [:]
+    private let pendingCommandsLock = NSLock()
     private var outputBuffer: String = ""
+    private let outputBufferLock = NSLock()
 
     static let detachCommand = "tmux detach"
     static let defaultSessionName = "moshi"
@@ -277,40 +279,51 @@ final class TmuxIntegration {
         let marker = UUID().uuidString
 
         return try await withCheckedThrowingContinuation { continuation in
+            pendingCommandsLock.lock()
             pendingCommands[marker] = continuation
+            pendingCommandsLock.unlock()
 
             // Execute command and echo marker when done
             session?.sendCommand("\(command); echo 'MOSHI_MARKER:\(marker):'$?")
 
             // Timeout after 5 seconds
-            Task {
+            Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
-                if let cont = pendingCommands.removeValue(forKey: marker) {
-                    cont.resume(throwing: TmuxError.timeout)
-                }
+                guard let self = self else { return }
+                self.pendingCommandsLock.lock()
+                let cont = self.pendingCommands.removeValue(forKey: marker)
+                self.pendingCommandsLock.unlock()
+                cont?.resume(throwing: TmuxError.timeout)
             }
         }
     }
 
     func processOutput(_ output: String) {
         // Accumulate output in buffer (output may arrive in chunks)
+        outputBufferLock.lock()
         outputBuffer += output
 
         // Look for our markers in the accumulated buffer
         let pattern = "MOSHI_MARKER:([^:]+):([0-9]+)"
 
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            outputBufferLock.unlock()
+            return
+        }
 
         let range = NSRange(outputBuffer.startIndex..., in: outputBuffer)
         let matches = regex.matches(in: outputBuffer, range: range)
 
         for match in matches {
-            guard let markerRange = Range(match.range(at: 1), in: outputBuffer),
-                  let fullMatchRange = Range(match.range, in: outputBuffer) else { continue }
+            guard let markerRange = Range(match.range(at: 1), in: outputBuffer) else { continue }
 
             let marker = String(outputBuffer[markerRange])
 
-            if let continuation = pendingCommands.removeValue(forKey: marker) {
+            pendingCommandsLock.lock()
+            let continuation = pendingCommands.removeValue(forKey: marker)
+            pendingCommandsLock.unlock()
+
+            if let continuation = continuation {
                 // Extract output before the marker from the buffer
                 let outputEnd = outputBuffer.range(of: "MOSHI_MARKER:\(marker)")?.lowerBound ?? outputBuffer.endIndex
                 let commandOutput = String(outputBuffer[..<outputEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -330,9 +343,12 @@ final class TmuxIntegration {
                     outputBuffer = ""
                 }
 
+                outputBufferLock.unlock()
                 continuation.resume(returning: commandOutput)
+                return // Exit after resuming to avoid issues with buffer mutation
             }
         }
+        outputBufferLock.unlock()
     }
 }
 

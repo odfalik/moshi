@@ -4,57 +4,52 @@ struct TerminalRenderer: View {
     @ObservedObject var emulator: TerminalEmulator
     let theme: TerminalTheme
     let font: TerminalFont
+    var onTap: (() -> Void)? = nil
 
     @State private var contentSize: CGSize = .zero
     @State private var selectedRange: TerminalSelection?
 
-    /// Get only the visible lines from the emulator
+    /// Get visible lines from the emulator
+    /// On alternate screen (fullscreen apps), always returns exactly `rows` lines
+    /// On normal screen, render at least up to the cursor row to ensure cursor is visible
     private var visibleLines: [(index: Int, line: TerminalLine)] {
         let start = emulator.screenStart
-        let end = min(emulator.lines.count, start + emulator.rows)
-        return (start..<end).map { idx in
-            (index: idx - start, line: emulator.lines[idx])
+        let availableLines = emulator.lines.count - start
+        // Always render at least up to cursor row + 1 to ensure cursor is visible
+        let minLinesToShow = emulator.cursorRow + 1
+        let linesToShow = emulator.isAlternateScreen ? emulator.rows : max(minLinesToShow, min(availableLines, emulator.rows))
+
+        return (0..<linesToShow).map { screenRow in
+            let lineIndex = start + screenRow
+            if lineIndex < emulator.lines.count {
+                return (index: screenRow, line: emulator.lines[lineIndex])
+            } else {
+                // Create empty line for display if buffer doesn't have enough lines
+                return (index: screenRow, line: TerminalLine(cells: Array(repeating: TerminalCell(), count: emulator.cols)))
+            }
         }
     }
 
     var body: some View {
         GeometryReader { geometry in
-            ScrollViewReader { proxy in
-                ScrollView([.vertical, .horizontal], showsIndicators: true) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(visibleLines, id: \.line.id) { item in
-                            TerminalLineView(
-                                line: item.line,
-                                lineIndex: item.index,
-                                theme: theme,
-                                font: font,
-                                cursorCol: item.index == emulator.cursorRow ? emulator.cursorCol : nil,
-                                selection: selectedRange
-                            )
-                            .id(item.line.id)
-                        }
-                    }
-                    .background(
-                        GeometryReader { contentGeometry in
-                            Color.clear.preference(
-                                key: ContentSizeKey.self,
-                                value: contentGeometry.size
-                            )
-                        }
+            // Use a simple VStack without ScrollView to prevent scroll position issues on resize
+            // Terminal content always renders from top, no scrolling within the visible area
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(visibleLines, id: \.line.id) { item in
+                    TerminalLineView(
+                        line: item.line,
+                        lineIndex: item.index,
+                        theme: theme,
+                        font: font,
+                        cursorCol: item.index == emulator.cursorRow ? emulator.cursorCol : nil,
+                        selection: selectedRange
                     )
                 }
-                .onChange(of: emulator.cursorRow) { _, newRow in
-                    // Get the line ID for the cursor row
-                    let start = emulator.screenStart
-                    let actualIndex = start + newRow
-                    if actualIndex >= 0 && actualIndex < emulator.lines.count {
-                        let lineId = emulator.lines[actualIndex].id
-                        withAnimation(.easeOut(duration: 0.1)) {
-                            proxy.scrollTo(lineId, anchor: .bottom)
-                        }
-                    }
-                }
+
+                // Fill remaining space to push content to top
+                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(theme.swiftUIBackground)
             .gesture(
                 DragGesture(minimumDistance: 10)
@@ -68,6 +63,8 @@ struct TerminalRenderer: View {
             .onTapGesture {
                 // Clear selection on tap
                 selectedRange = nil
+                // Notify parent (e.g., to show keyboard)
+                onTap?()
             }
             .contextMenu {
                 if selectedRange != nil {
@@ -275,6 +272,7 @@ struct ContentSizeKey: PreferenceKey {
 
 extension Notification.Name {
     static let terminalPaste = Notification.Name("terminalPaste")
+    static let terminalFocusKeyboard = Notification.Name("terminalFocusKeyboard")
 }
 
 #Preview {

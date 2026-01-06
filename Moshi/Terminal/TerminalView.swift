@@ -11,8 +11,7 @@ struct TerminalView: View {
     @State private var inputText = ""
     @State private var keyboardHeight: CGFloat = 0
     @State private var lastProcessedLength: Int = 0
-
-    @FocusState private var isInputFocused: Bool
+    @State private var terminalHeight: CGFloat = 0
 
     var body: some View {
         GeometryReader { geometry in
@@ -22,15 +21,16 @@ struct TerminalView: View {
                     TmuxStatusBar(session: session, tmuxSession: tmuxSession)
                 }
 
-                // Terminal content
+                // Terminal content - constrained to exact terminal height
                 TerminalRenderer(
                     emulator: emulator,
                     theme: appSettings.currentTheme,
-                    font: appSettings.terminalFont
+                    font: appSettings.terminalFont,
+                    onTap: {
+                        NotificationCenter.default.post(name: .terminalFocusKeyboard, object: nil)
+                    }
                 )
-                .onTapGesture {
-                    isInputFocused = true
-                }
+                .frame(height: terminalHeight > 0 ? terminalHeight : nil)
                 .gesture(
                     DragGesture()
                         .onEnded { value in
@@ -41,7 +41,6 @@ struct TerminalView: View {
                 // Hidden text input for keyboard
                 HiddenInput(
                     text: $inputText,
-                    isFocused: $isInputFocused,
                     onTextInput: { text in
                         session.sendInput(text)
                     },
@@ -68,7 +67,10 @@ struct TerminalView: View {
                 }
             }
             .onAppear {
-                isInputFocused = true
+                // Focus keyboard after a short delay to ensure view is ready
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    NotificationCenter.default.post(name: .terminalFocusKeyboard, object: nil)
+                }
                 updateTerminalSize(geometry.size)
             }
             .onChange(of: geometry.size) { _, newSize in
@@ -86,6 +88,24 @@ struct TerminalView: View {
             }
             .toolbar {
                 terminalToolbar
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { notification in
+                if let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect {
+                    // Get the keyboard height relative to the view, accounting for safe area
+                    let screenHeight = UIScreen.main.bounds.height
+                    let keyboardTop = screenHeight - frame.height
+                    // Only count the part of keyboard that overlaps with our view area
+                    let safeAreaBottom = UIApplication.shared.connectedScenes
+                        .compactMap { $0 as? UIWindowScene }
+                        .first?.windows.first?.safeAreaInsets.bottom ?? 0
+                    keyboardHeight = max(0, frame.height - safeAreaBottom)
+                    Logger.terminal.debug("Keyboard shown: frame=\(frame.height), adjusted=\(keyboardHeight)")
+                    updateTerminalSize(geometry.size)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                keyboardHeight = 0
+                updateTerminalSize(geometry.size)
             }
         }
     }
@@ -174,19 +194,23 @@ struct TerminalView: View {
         let charWidth = appSettings.terminalFont.characterWidth
         let charHeight = appSettings.terminalFont.lineHeight
 
-        // Account for safe areas and UI elements
-        let macroKeyboardHeight: CGFloat = showingMacroKeyboard ? 120 : 0  // Increased from 50
+        // Account for UI elements within the VStack
+        // Note: Do NOT subtract keyboardHeight - SwiftUI already adjusts geometry.size for keyboard
+        let macroKeyboardHeight: CGFloat = showingMacroKeyboard ? 120 : 0
         let tmuxBarHeight: CGFloat = showingTmuxBar ? 30 : 0
-        let toolbarHeight: CGFloat = 44  // Navigation bar
 
         let availableWidth = size.width - 8  // Small horizontal padding
-        let availableHeight = size.height - macroKeyboardHeight - tmuxBarHeight - toolbarHeight
+        let availableHeight = size.height - tmuxBarHeight - macroKeyboardHeight
 
         let cols = max(20, Int(availableWidth / charWidth))
         let rows = max(5, Int(availableHeight / charHeight))
 
-        Logger.terminal.debug("Terminal size: \(cols)x\(rows) (width: \(size.width), charWidth: \(charWidth))")
+        // Set exact terminal view height to match calculated rows
+        let newTerminalHeight = CGFloat(rows) * charHeight
 
+        Logger.terminal.debug("Terminal size: \(cols)x\(rows) geometry=\(size.height) available=\(availableHeight) termHeight=\(newTerminalHeight)")
+
+        terminalHeight = newTerminalHeight
         emulator.resize(cols: cols, rows: rows)
         session.resize(cols: cols, rows: rows)
     }
@@ -290,7 +314,6 @@ struct TmuxWindowTab: View {
 
 struct HiddenInput: UIViewRepresentable {
     @Binding var text: String
-    @FocusState.Binding var isFocused: Bool
     let onTextInput: (String) -> Void
     let onSpecialKey: (SpecialKey) -> Void
 
@@ -308,6 +331,12 @@ struct HiddenInput: UIViewRepresentable {
         textField.onSpecialKey = onSpecialKey
         textField.onTextInput = onTextInput
 
+        // Store reference in coordinator for focus management
+        context.coordinator.textField = textField
+
+        // Listen for focus notifications
+        context.coordinator.observeFocusNotification()
+
         // Become first responder on next run loop to ensure view is in hierarchy
         DispatchQueue.main.async {
             textField.becomeFirstResponder()
@@ -323,12 +352,6 @@ struct HiddenInput: UIViewRepresentable {
             terminalField.onSpecialKey = onSpecialKey
             terminalField.onTextInput = onTextInput
         }
-        // Always try to become first responder when focused
-        if isFocused && !uiView.isFirstResponder {
-            DispatchQueue.main.async {
-                uiView.becomeFirstResponder()
-            }
-        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -337,9 +360,27 @@ struct HiddenInput: UIViewRepresentable {
 
     class Coordinator: NSObject, UITextFieldDelegate {
         let parent: HiddenInput
+        weak var textField: UITextField?
+        private var focusObserver: NSObjectProtocol?
 
         init(_ parent: HiddenInput) {
             self.parent = parent
+        }
+
+        deinit {
+            if let observer = focusObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
+
+        func observeFocusNotification() {
+            focusObserver = NotificationCenter.default.addObserver(
+                forName: .terminalFocusKeyboard,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.textField?.becomeFirstResponder()
+            }
         }
 
         func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
@@ -421,6 +462,11 @@ class TerminalTextField: UITextField {
 
     @objc private func handleEscape() {
         onSpecialKey?(.escape)
+    }
+
+    override func deleteBackward() {
+        // Send backspace character (0x7F) to the terminal instead of letting iOS handle it
+        onTextInput?("\u{7F}")
     }
 }
 

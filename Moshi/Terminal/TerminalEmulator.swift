@@ -15,12 +15,30 @@ final class TerminalEmulator: ObservableObject {
 
     /// The starting index of the visible screen in the lines array
     var screenStart: Int {
-        max(0, lines.count - rows)
+        // Always start from 0 - scrollback can be added later
+        // This ensures content always renders from the top
+        return 0
     }
 
     /// Convert a screen-relative row to an actual index in lines array
+    /// Creates lines if needed to ensure the row exists
     private func lineIndex(for screenRow: Int) -> Int {
-        screenStart + screenRow
+        let targetIndex = screenStart + screenRow
+
+        if isAlternateScreen {
+            // On alternate screen, ensure we have exactly `rows` lines but never more
+            while lines.count < rows {
+                lines.append(createEmptyLine())
+            }
+            // Clamp to valid range - never grow beyond rows on alternate screen
+            return min(targetIndex, rows - 1)
+        } else {
+            // Normal screen: create lines as needed
+            while lines.count <= targetIndex {
+                lines.append(createEmptyLine())
+            }
+            return targetIndex
+        }
     }
     private var scrollbackLimit: Int = 10000
 
@@ -36,7 +54,12 @@ final class TerminalEmulator: ObservableObject {
 
     // Alternate screen buffer (for vim, less, etc.)
     private var alternateBuffer: [TerminalLine] = []
-    private var isAlternateScreen = false
+    @Published private(set) var isAlternateScreen = false
+
+    // Scroll region (1-indexed in ANSI, 0-indexed internally)
+    // Default is entire screen (0 to rows-1)
+    private var scrollRegionTop: Int = 0
+    private var scrollRegionBottom: Int = 23  // Will be updated on resize
 
     init() {
         initializeBuffer()
@@ -44,6 +67,8 @@ final class TerminalEmulator: ObservableObject {
 
     private func initializeBuffer() {
         lines = (0..<rows).map { _ in createEmptyLine() }
+        scrollRegionTop = 0
+        scrollRegionBottom = rows - 1
     }
 
     private func createEmptyLine() -> TerminalLine {
@@ -51,12 +76,40 @@ final class TerminalEmulator: ObservableObject {
     }
 
     func resize(cols: Int, rows: Int) {
+        let oldRows = self.rows
         self.cols = cols
         self.rows = rows
+        print("[TERM DEBUG] resize: cols=\(cols), rows=\(rows), oldRows=\(oldRows), isAlt=\(isAlternateScreen), lines.count=\(lines.count)")
 
-        // Adjust buffer to new size
-        while lines.count < rows {
-            lines.append(createEmptyLine())
+        if isAlternateScreen {
+            // On alternate screen, always maintain exactly `rows` lines
+            // This prevents scroll position issues when keyboard shows/hides
+            if lines.count < rows {
+                // Add empty lines at the bottom
+                while lines.count < rows {
+                    lines.append(createEmptyLine())
+                }
+            } else if lines.count > rows {
+                // Remove lines from top (scroll up effect)
+                while lines.count > rows {
+                    lines.removeFirst()
+                }
+                // Adjust cursor if it was on a removed line
+                cursorRow = min(cursorRow, rows - 1)
+            }
+        } else {
+            // Normal screen: trim empty lines from beginning if too many
+            while lines.count > rows * 2 {
+                guard let firstLine = lines.first, isLineEmpty(firstLine) else {
+                    break
+                }
+                lines.removeFirst()
+            }
+
+            // Ensure we have at least one line
+            if lines.isEmpty {
+                lines.append(createEmptyLine())
+            }
         }
 
         // Adjust line widths
@@ -68,13 +121,26 @@ final class TerminalEmulator: ObservableObject {
             }
         }
 
-        // Clamp cursor
+        // Clamp cursor to valid range based on actual screen size
         cursorRow = min(cursorRow, rows - 1)
         cursorCol = min(cursorCol, cols - 1)
+
+        // Reset scroll region to full screen on resize
+        scrollRegionTop = 0
+        scrollRegionBottom = rows - 1
     }
 
+    private func isLineEmpty(_ line: TerminalLine) -> Bool {
+        line.cells.allSatisfy { $0.character == " " || $0.character == "\0" }
+    }
+
+    private var debugCounter = 0
     func processOutput(_ output: String) {
         let tokens = parser.parse(output)
+        debugCounter += 1
+        if debugCounter % 50 == 0 {
+            print("[TERM DEBUG] processOutput #\(debugCounter): isAlt=\(isAlternateScreen), lines=\(lines.count), rows=\(rows), cursor=(\(cursorRow),\(cursorCol))")
+        }
 
         for token in tokens {
             switch token {
@@ -163,27 +229,71 @@ final class TerminalEmulator: ObservableObject {
     }
 
     private func lineFeed() {
-        cursorRow += 1
+        // Check if cursor is within the scroll region
+        let inScrollRegion = cursorRow >= scrollRegionTop && cursorRow <= scrollRegionBottom
 
-        if cursorRow >= rows {
-            if isAlternateScreen {
-                // On alternate screen: no scrollback, just scroll within fixed buffer
-                // Remove top line, add new line at bottom, keep lines.count = rows
-                if lines.count > 0 {
-                    lines.removeFirst()
-                }
-                lines.append(createEmptyLine())
+        if inScrollRegion {
+            if cursorRow == scrollRegionBottom {
+                // Cursor is at bottom of scroll region - scroll the region
+                scrollRegionUp()
+                // Cursor stays at scrollRegionBottom
             } else {
-                // Normal screen: accumulate scrollback
-                lines.append(createEmptyLine())
+                // Within scroll region but not at bottom - just move down
+                cursorRow += 1
             }
-            cursorRow = rows - 1
+        } else {
+            // Cursor is outside scroll region
+            if cursorRow < rows - 1 {
+                // Not at absolute bottom - just move down
+                cursorRow += 1
+            }
+            // If at absolute bottom and outside scroll region, do nothing (cursor stays put)
+            // This is important for status bars - they shouldn't cause scrolling
+        }
+    }
 
-            // Trim scrollback if exceeds limit (only applies to normal screen)
-            while lines.count > scrollbackLimit {
-                lines.removeFirst()
+    /// Scroll the content within the scroll region up by one line
+    private func scrollRegionUp() {
+        // Ensure we have enough lines
+        while lines.count < rows {
+            lines.append(createEmptyLine())
+        }
+
+        let topIndex = lineIndex(for: scrollRegionTop)
+        let bottomIndex = lineIndex(for: scrollRegionBottom)
+
+        guard topIndex < lines.count && bottomIndex < lines.count && topIndex <= bottomIndex else { return }
+
+        // Shift lines within the scroll region up
+        for i in topIndex..<bottomIndex {
+            if i + 1 < lines.count {
+                lines[i] = lines[i + 1]
             }
         }
+        // Clear the bottom line of the scroll region
+        lines[bottomIndex] = createEmptyLine()
+    }
+
+    /// Scroll the content within the scroll region down by one line
+    private func scrollRegionDown() {
+        // Ensure we have enough lines
+        while lines.count < rows {
+            lines.append(createEmptyLine())
+        }
+
+        let topIndex = lineIndex(for: scrollRegionTop)
+        let bottomIndex = lineIndex(for: scrollRegionBottom)
+
+        guard topIndex < lines.count && bottomIndex < lines.count && topIndex <= bottomIndex else { return }
+
+        // Shift lines within the scroll region down
+        for i in stride(from: bottomIndex, to: topIndex, by: -1) {
+            if i - 1 >= 0 {
+                lines[i] = lines[i - 1]
+            }
+        }
+        // Clear the top line of the scroll region
+        lines[topIndex] = createEmptyLine()
     }
 
     // MARK: - Escape Sequences
@@ -248,23 +358,45 @@ final class TerminalEmulator: ObservableObject {
 
         case .alternateScreenOn:
             if !isAlternateScreen {
+                print("[TERM DEBUG] Switching to ALTERNATE screen, rows=\(rows), saving \(lines.count) lines")
                 alternateBuffer = lines
                 lines = (0..<rows).map { _ in createEmptyLine() }
                 isAlternateScreen = true
                 cursorRow = 0
                 cursorCol = 0
+                // Reset scroll region to full screen
+                scrollRegionTop = 0
+                scrollRegionBottom = rows - 1
+                print("[TERM DEBUG] Alternate screen created with \(lines.count) lines")
             }
 
         case .alternateScreenOff:
             if isAlternateScreen {
+                print("[TERM DEBUG] Switching to NORMAL screen, restoring \(alternateBuffer.count) lines")
                 lines = alternateBuffer
                 alternateBuffer = []
                 isAlternateScreen = false
+                // Reset scroll region to full screen
+                scrollRegionTop = 0
+                scrollRegionBottom = rows - 1
             }
 
         case .setScrollRegion(let top, let bottom):
-            // Handle scroll region (used by tmux, vim, etc.)
-            break
+            // DECSTBM - Set Top and Bottom Margins
+            // Parameters are 1-indexed. Default is full screen.
+            // CSI r with no params resets to full screen
+            if top == 0 && bottom == 0 {
+                // Reset to full screen
+                scrollRegionTop = 0
+                scrollRegionBottom = rows - 1
+            } else {
+                scrollRegionTop = max(0, top - 1)  // Convert to 0-indexed
+                scrollRegionBottom = min(rows - 1, (bottom > 0 ? bottom - 1 : rows - 1))
+            }
+            // Setting scroll region moves cursor to home position
+            cursorRow = 0
+            cursorCol = 0
+            print("[TERM DEBUG] setScrollRegion: top=\(scrollRegionTop), bottom=\(scrollRegionBottom), rows=\(rows)")
 
         case .insertLines(let n):
             insertLines(n)
@@ -282,15 +414,15 @@ final class TerminalEmulator: ObservableObject {
             eraseCharacters(n)
 
         case .scrollUp(let n):
+            // SU - Scroll Up: scroll content within scroll region up
             for _ in 0..<n {
-                lines.removeFirst()
-                lines.append(createEmptyLine())
+                scrollRegionUp()
             }
 
         case .scrollDown(let n):
+            // SD - Scroll Down: scroll content within scroll region down
             for _ in 0..<n {
-                lines.removeLast()
-                lines.insert(createEmptyLine(), at: 0)
+                scrollRegionDown()
             }
 
         case .setTitle(let title):
@@ -323,13 +455,15 @@ final class TerminalEmulator: ObservableObject {
             eraseLine(mode: 1)
 
         case 2, 3: // Entire screen
-            // Clear only the visible screen portion
-            for screenRow in 0..<rows {
-                let actualRow = lineIndex(for: screenRow)
-                if actualRow < lines.count {
-                    lines[actualRow] = createEmptyLine()
-                }
+            if isAlternateScreen {
+                // On alternate screen, maintain exactly `rows` lines for fullscreen apps
+                lines = (0..<rows).map { _ in createEmptyLine() }
+            } else {
+                // Normal screen: reset to minimal lines
+                lines = [createEmptyLine()]
             }
+            cursorRow = 0
+            cursorCol = 0
 
         default:
             break
@@ -364,34 +498,44 @@ final class TerminalEmulator: ObservableObject {
     }
 
     private func insertLines(_ n: Int) {
-        let actualRow = lineIndex(for: cursorRow)
-        let screenEnd = screenStart + rows
+        // IL - Insert Lines within scroll region
+        // Lines below cursor (within scroll region) scroll down
+        // Cursor must be within scroll region for this to work
+        guard cursorRow >= scrollRegionTop && cursorRow <= scrollRegionBottom else { return }
+
+        let startRow = lineIndex(for: cursorRow)
+        let bottomRow = lineIndex(for: scrollRegionBottom)
 
         for _ in 0..<n {
-            guard actualRow < lines.count else { continue }
+            guard startRow < lines.count && bottomRow < lines.count else { continue }
+
+            // Remove the bottom line of scroll region
+            if bottomRow < lines.count {
+                lines.remove(at: bottomRow)
+            }
 
             // Insert blank line at cursor position
-            lines.insert(createEmptyLine(), at: actualRow)
-
-            // Remove the line that scrolled off the bottom of the screen
-            if lines.count > screenEnd {
-                lines.remove(at: screenEnd)
-            }
+            lines.insert(createEmptyLine(), at: startRow)
         }
     }
 
     private func deleteLines(_ n: Int) {
-        let actualRow = lineIndex(for: cursorRow)
-        let screenEnd = screenStart + rows
+        // DL - Delete Lines within scroll region
+        // Lines below cursor (within scroll region) scroll up
+        // Cursor must be within scroll region for this to work
+        guard cursorRow >= scrollRegionTop && cursorRow <= scrollRegionBottom else { return }
+
+        let startRow = lineIndex(for: cursorRow)
+        let bottomRow = lineIndex(for: scrollRegionBottom)
 
         for _ in 0..<n {
-            guard actualRow < lines.count else { continue }
+            guard startRow < lines.count && bottomRow < lines.count else { continue }
 
             // Remove line at cursor position
-            lines.remove(at: actualRow)
+            lines.remove(at: startRow)
 
-            // Add blank line at bottom of screen
-            let insertPos = min(screenEnd - 1, lines.count)
+            // Insert blank line at bottom of scroll region
+            let insertPos = min(bottomRow, lines.count)
             lines.insert(createEmptyLine(), at: insertPos)
         }
     }

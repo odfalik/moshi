@@ -224,6 +224,14 @@ struct MacroKeyboard: View {
     private func sendKey(_ key: SpecialKey) {
         let impact = UIImpactFeedbackGenerator(style: .light)
         impact.impactOccurred()
+
+        // Handle Shift+Tab specially (backtab)
+        if key == .tab && modifiers.shift {
+            session.sendInput("\u{1B}[Z")
+            modifiers.reset()
+            return
+        }
+
         session.sendSpecialKey(key)
         modifiers.reset()
     }

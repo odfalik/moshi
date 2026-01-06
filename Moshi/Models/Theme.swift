@@ -36,10 +36,47 @@ struct TerminalTheme: Identifiable, Codable, Equatable {
     }
 
     func colorForIndex(_ index: Int) -> Color {
-        guard index >= 0 && index < palette.count else {
+        guard index >= 0 else {
             return foreground.color
         }
-        return palette[index].color
+
+        // Standard 16 ANSI colors - use theme palette
+        if index < 16 && index < palette.count {
+            return palette[index].color
+        }
+
+        // 256-color xterm palette
+        if index < 16 {
+            // Palette colors not defined - use fallback
+            return foreground.color
+        } else if index < 232 {
+            // 6x6x6 color cube (indices 16-231)
+            // index = 16 + 36*r + 6*g + b where r,g,b are 0-5
+            let cubeIndex = index - 16
+            let r = cubeIndex / 36
+            let g = (cubeIndex % 36) / 6
+            let b = cubeIndex % 6
+
+            // Map 0-5 to 0-255 (0, 95, 135, 175, 215, 255)
+            func cubeValue(_ v: Int) -> Double {
+                if v == 0 { return 0 }
+                return Double(55 + v * 40) / 255.0
+            }
+
+            return Color(
+                red: cubeValue(r),
+                green: cubeValue(g),
+                blue: cubeValue(b)
+            )
+        } else if index < 256 {
+            // Grayscale (indices 232-255)
+            // 24 shades from 8 to 238
+            let shade = 8 + (index - 232) * 10
+            let value = Double(shade) / 255.0
+            return Color(red: value, green: value, blue: value)
+        } else {
+            return foreground.color
+        }
     }
 }
 
@@ -303,6 +340,14 @@ struct TerminalFont: Codable, Equatable {
 
     var uiFont: UIFont {
         UIFont(name: name, size: size) ?? UIFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    }
+
+    var boldUIFont: UIFont {
+        // Try to get bold variant of the font
+        if let descriptor = UIFont(name: name, size: size)?.fontDescriptor.withSymbolicTraits(.traitBold) {
+            return UIFont(descriptor: descriptor, size: size)
+        }
+        return UIFont.monospacedSystemFont(ofSize: size, weight: .bold)
     }
 
     var font: Font {

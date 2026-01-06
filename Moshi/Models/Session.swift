@@ -18,6 +18,8 @@ final class Session: Identifiable, ObservableObject {
     @Published var tmuxSession: TmuxSession?
     @Published var tmuxStatus: TmuxStatus = .unknown
     @Published var terminalOutput: String = ""
+    /// Incremented when terminalOutput is replaced (not appended) - signals view to reprocess
+    @Published var outputRevision: Int = 0
     @Published var cursorPosition: CursorPosition = CursorPosition()
     @Published var scrollbackLines: [TerminalLine] = []
     @Published var lastActivity: Date = Date()
@@ -26,6 +28,12 @@ final class Session: Identifiable, ObservableObject {
     private var moshClient: MoshClient?
     private var cancellables = Set<AnyCancellable>()
     private var tmuxIntegration: TmuxIntegration?
+
+    // Output batching for performance
+    private var outputBuffer = ""
+    private var outputFlushTimer: Timer?
+    private let outputFlushInterval: TimeInterval = 0.016  // ~60fps
+    private let outputBufferLock = NSLock()
 
     weak var delegate: SessionDelegate?
 
@@ -131,6 +139,7 @@ final class Session: Identifiable, ObservableObject {
                     // Prepend scrollback to terminal output
                     if !scrollback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         terminalOutput = scrollback
+                        outputRevision += 1  // Signal view to reprocess from start
                     }
                 }
             } catch {
@@ -150,6 +159,7 @@ final class Session: Identifiable, ObservableObject {
                 tmuxSession = newSession
                 // Notify user that previous session was lost
                 terminalOutput = "⚠️ Previous tmux session not found (host may have rebooted).\n   Started fresh session: \(tmuxSessionName)\n\n"
+                outputRevision += 1  // Signal view to reprocess from start
             }
             Logger.session.info("Created new tmux session (previous not found): \(tmuxSessionName)")
         }
@@ -269,11 +279,38 @@ extension Session: SSHConnectionDelegate {
         // Forward output to tmux integration for marker parsing
         tmuxIntegration?.processOutput(output)
 
-        Task { @MainActor in
-            terminalOutput += output
-            lastActivity = Date()
-            delegate?.sessionDidReceiveOutput(self, output: output)
+        // Buffer output for batched updates (improves performance during fast output)
+        outputBufferLock.lock()
+        outputBuffer += output
+        outputBufferLock.unlock()
+
+        // Schedule flush if not already scheduled
+        DispatchQueue.main.async { [weak self] in
+            self?.scheduleOutputFlush()
         }
+    }
+
+    private func scheduleOutputFlush() {
+        guard outputFlushTimer == nil else { return }
+
+        outputFlushTimer = Timer.scheduledTimer(withTimeInterval: outputFlushInterval, repeats: false) { [weak self] _ in
+            self?.flushOutputBuffer()
+        }
+    }
+
+    private func flushOutputBuffer() {
+        outputFlushTimer = nil
+
+        outputBufferLock.lock()
+        let bufferedOutput = outputBuffer
+        outputBuffer = ""
+        outputBufferLock.unlock()
+
+        guard !bufferedOutput.isEmpty else { return }
+
+        terminalOutput += bufferedOutput
+        lastActivity = Date()
+        delegate?.sessionDidReceiveOutput(self, output: bufferedOutput)
     }
 
     func connectionDidDisconnect(error: Error?) {
@@ -320,10 +357,13 @@ extension Session: MoshClientDelegate {
         // Forward output to tmux integration for marker parsing
         tmuxIntegration?.processOutput(output)
 
-        Task { @MainActor in
-            terminalOutput += output
-            lastActivity = Date()
-            delegate?.sessionDidReceiveOutput(self, output: output)
+        // Buffer output for batched updates (same as SSH)
+        outputBufferLock.lock()
+        outputBuffer += output
+        outputBufferLock.unlock()
+
+        DispatchQueue.main.async { [weak self] in
+            self?.scheduleOutputFlush()
         }
     }
 
@@ -396,6 +436,7 @@ enum TerminalColor {
 }
 
 enum SpecialKey: String, CaseIterable {
+    case enter = "ENTER"
     case escape = "ESC"
     case tab = "TAB"
     case ctrlC = "^C"
@@ -427,6 +468,7 @@ enum SpecialKey: String, CaseIterable {
 
     var sequence: String {
         switch self {
+        case .enter: return "\r"
         case .escape: return "\u{1B}"
         case .tab: return "\t"
         case .ctrlC: return "\u{03}"

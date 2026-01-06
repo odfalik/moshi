@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct TerminalRenderer: View {
     @ObservedObject var emulator: TerminalEmulator
@@ -6,16 +7,143 @@ struct TerminalRenderer: View {
     let font: TerminalFont
     var onTap: (() -> Void)? = nil
 
-    @State private var contentSize: CGSize = .zero
-    @State private var selectedRange: TerminalSelection?
+    var body: some View {
+        SelectableTerminalView(
+            emulator: emulator,
+            theme: theme,
+            font: font,
+            onTap: onTap
+        )
+        .background(theme.swiftUIBackground)
+    }
+}
 
-    /// Get visible lines from the emulator
-    /// On alternate screen (fullscreen apps), always returns exactly `rows` lines
-    /// On normal screen, render at least up to the cursor row to ensure cursor is visible
+// MARK: - Native iOS Selectable Terminal
+
+struct SelectableTerminalView: UIViewRepresentable {
+    @ObservedObject var emulator: TerminalEmulator
+    let theme: TerminalTheme
+    let font: TerminalFont
+    var onTap: (() -> Void)?
+
+    func makeUIView(context: Context) -> TerminalTextView {
+        let textView = TerminalTextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.backgroundColor = UIColor(theme.swiftUIBackground)
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.showsVerticalScrollIndicator = false
+        textView.showsHorizontalScrollIndicator = false
+        textView.isScrollEnabled = false
+        textView.dataDetectorTypes = []  // Disable link detection
+        textView.linkTextAttributes = [:]
+        textView.onTap = onTap
+        textView.tintColor = UIColor(theme.cursor.color)  // Selection handles color
+
+        return textView
+    }
+
+    func updateUIView(_ textView: TerminalTextView, context: Context) {
+        // Only update text if content changed to preserve selection state
+        let attributedText = buildAttributedString()
+        if textView.attributedText.string != attributedText.string {
+            // Save selection
+            let savedSelection = textView.selectedRange
+            textView.attributedText = attributedText
+            // Restore selection if still valid
+            if savedSelection.location + savedSelection.length <= attributedText.length {
+                textView.selectedRange = savedSelection
+            }
+        }
+
+        textView.backgroundColor = UIColor(theme.swiftUIBackground)
+        textView.cursorPosition = CGPoint(
+            x: CGFloat(emulator.cursorCol) * font.characterWidth,
+            y: CGFloat(emulator.cursorRow) * font.lineHeight
+        )
+        textView.cursorSize = CGSize(width: font.characterWidth, height: font.lineHeight)
+        textView.cursorColor = UIColor(theme.cursor.color)
+        textView.updateCursorPosition()
+    }
+
+    private func buildAttributedString() -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        let visible = visibleLines
+
+        for (index, item) in visible.enumerated() {
+            let lineAttr = buildLineAttributedString(line: item.line)
+            result.append(lineAttr)
+
+            // Add newline except for last line
+            if index < visible.count - 1 {
+                result.append(NSAttributedString(string: "\n", attributes: [
+                    .font: font.uiFont,
+                    .foregroundColor: UIColor(theme.swiftUIForeground)
+                ]))
+            }
+        }
+
+        return result
+    }
+
+    private func buildLineAttributedString(line: TerminalLine) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+
+        for cell in line.cells {
+            let char = String(cell.character)
+            let fgColor = colorFromTerminalColor(cell.foreground, isBackground: false, cell: cell)
+            let bgColor = colorFromTerminalColor(cell.background, isBackground: true, cell: cell)
+
+            var attributes: [NSAttributedString.Key: Any] = [
+                .font: font.uiFont,
+                .foregroundColor: fgColor,
+                .backgroundColor: bgColor
+            ]
+
+            if cell.attributes.contains(.bold) {
+                attributes[.font] = font.boldUIFont
+            }
+
+            if cell.attributes.contains(.underline) {
+                attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            }
+
+            result.append(NSAttributedString(string: char, attributes: attributes))
+        }
+
+        return result
+    }
+
+    private func colorFromTerminalColor(_ color: TerminalColor, isBackground: Bool, cell: TerminalCell) -> UIColor {
+        let isInverse = cell.attributes.contains(.inverse)
+
+        if isInverse {
+            // Swap foreground and background
+            if isBackground {
+                return uiColorFromTerminalColor(cell.foreground, isBackground: false)
+            } else {
+                return uiColorFromTerminalColor(cell.background, isBackground: true)
+            }
+        }
+
+        return uiColorFromTerminalColor(color, isBackground: isBackground)
+    }
+
+    private func uiColorFromTerminalColor(_ color: TerminalColor, isBackground: Bool) -> UIColor {
+        switch color {
+        case .default:
+            return isBackground ? UIColor(theme.swiftUIBackground) : UIColor(theme.swiftUIForeground)
+        case .indexed(let index):
+            return UIColor(theme.colorForIndex(index))
+        case .rgb(let r, let g, let b):
+            return UIColor(red: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255, alpha: 1)
+        }
+    }
+
     private var visibleLines: [(index: Int, line: TerminalLine)] {
         let start = emulator.screenStart
         let availableLines = emulator.lines.count - start
-        // Always render at least up to cursor row + 1 to ensure cursor is visible
         let minLinesToShow = emulator.cursorRow + 1
         let linesToShow = emulator.isAlternateScreen ? emulator.rows : max(minLinesToShow, min(availableLines, emulator.rows))
 
@@ -24,120 +152,74 @@ struct TerminalRenderer: View {
             if lineIndex < emulator.lines.count {
                 return (index: screenRow, line: emulator.lines[lineIndex])
             } else {
-                // Create empty line for display if buffer doesn't have enough lines
                 return (index: screenRow, line: TerminalLine(cells: Array(repeating: TerminalCell(), count: emulator.cols)))
             }
         }
     }
+}
 
-    var body: some View {
-        GeometryReader { geometry in
-            // Use a simple VStack without ScrollView to prevent scroll position issues on resize
-            // Terminal content always renders from top, no scrolling within the visible area
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(visibleLines, id: \.line.id) { item in
-                    TerminalLineView(
-                        line: item.line,
-                        lineIndex: item.index,
-                        theme: theme,
-                        font: font,
-                        cursorCol: item.index == emulator.cursorRow ? emulator.cursorCol : nil,
-                        selection: selectedRange
-                    )
-                }
+// MARK: - Custom UITextView with cursor overlay
 
-                // Fill remaining space to push content to top
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(theme.swiftUIBackground)
-            .gesture(
-                DragGesture(minimumDistance: 10)
-                    .onChanged { value in
-                        updateSelection(at: value.location, in: geometry.size, isStart: value.translation == .zero)
-                    }
-                    .onEnded { _ in
-                        // Selection persists until user taps or context menu action
-                    }
-            )
-            .onTapGesture {
-                // Clear selection on tap
-                selectedRange = nil
-                // Notify parent (e.g., to show keyboard)
-                onTap?()
-            }
-            .contextMenu {
-                if selectedRange != nil {
-                    Button {
-                        copySelection()
-                    } label: {
-                        Label("Copy", systemImage: "doc.on.doc")
-                    }
-                }
+class TerminalTextView: UITextView {
+    var onTap: (() -> Void)?
+    var cursorPosition: CGPoint = .zero
+    var cursorSize: CGSize = CGSize(width: 8, height: 16)
+    var cursorColor: UIColor = .white
+    private var cursorLayer: CALayer?
 
-                Button {
-                    paste()
-                } label: {
-                    Label("Paste", systemImage: "doc.on.clipboard")
-                }
+    override init(frame: CGRect, textContainer: NSTextContainer?) {
+        super.init(frame: frame, textContainer: textContainer)
+        setup()
+    }
 
-                Button {
-                    selectAll()
-                } label: {
-                    Label("Select All", systemImage: "selection.pin.in.out")
-                }
-            }
-        }
-        .onPreferenceChange(ContentSizeKey.self) { size in
-            contentSize = size
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    private func setup() {
+        // Add cursor layer
+        let cursor = CALayer()
+        cursor.backgroundColor = cursorColor.withAlphaComponent(0.7).cgColor
+        layer.addSublayer(cursor)
+        cursorLayer = cursor
+
+        // Single tap to focus keyboard (doesn't interfere with selection)
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleSingleTap))
+        tap.numberOfTapsRequired = 1
+        tap.delegate = self
+        addGestureRecognizer(tap)
+    }
+
+    @objc private func handleSingleTap(_ gesture: UITapGestureRecognizer) {
+        // Only focus keyboard if no text is selected
+        if selectedRange.length == 0 {
+            onTap?()
         }
     }
 
-    private func updateSelection(at point: CGPoint, in size: CGSize, isStart: Bool = false) {
-        // Calculate character position from point
-        let charWidth = font.characterWidth
-        let charHeight = font.lineHeight
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateCursorPosition()
+    }
 
-        let col = Int(point.x / charWidth)
-        let row = Int(point.y / charHeight)
+    func updateCursorPosition() {
+        cursorLayer?.frame = CGRect(origin: cursorPosition, size: cursorSize)
+        cursorLayer?.backgroundColor = cursorColor.withAlphaComponent(0.7).cgColor
+    }
 
-        // Update selection range
-        if selectedRange == nil || isStart {
-            selectedRange = TerminalSelection(startRow: row, startCol: col, endRow: row, endCol: col)
-        } else {
-            selectedRange?.endRow = row
-            selectedRange?.endCol = col
+    // Allow copy/paste/select actions
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        switch action {
+        case #selector(copy(_:)), #selector(selectAll(_:)), #selector(select(_:)), #selector(paste(_:)):
+            return true
+        default:
+            return false
         }
     }
 
-    private func copySelection() {
-        guard let selection = selectedRange else { return }
-
-        var text = ""
-        let visible = visibleLines
-        for screenRow in selection.startRow...selection.endRow {
-            guard screenRow < visible.count else { continue }
-
-            let line = visible[screenRow].line
-            let startCol = screenRow == selection.startRow ? selection.startCol : 0
-            let endCol = screenRow == selection.endRow ? selection.endCol : line.cells.count
-
-            for col in startCol..<min(endCol, line.cells.count) {
-                text.append(line.cells[col].character)
-            }
-
-            if screenRow < selection.endRow && !line.wrapped {
-                text.append("\n")
-            }
-        }
-
-        UIPasteboard.general.string = text.trimmingCharacters(in: .whitespaces)
-        selectedRange = nil
-    }
-
-    private func paste() {
+    override func paste(_ sender: Any?) {
         if let text = UIPasteboard.general.string {
-            // Send text to session
             NotificationCenter.default.post(
                 name: .terminalPaste,
                 object: nil,
@@ -145,126 +227,21 @@ struct TerminalRenderer: View {
             )
         }
     }
-
-    private func selectAll() {
-        let visible = visibleLines
-        selectedRange = TerminalSelection(
-            startRow: 0,
-            startCol: 0,
-            endRow: max(0, visible.count - 1),
-            endCol: visible.last?.line.cells.count ?? 0
-        )
-    }
 }
 
-struct TerminalSelection {
-    var startRow: Int
-    var startCol: Int
-    var endRow: Int
-    var endCol: Int
-
-    func contains(row: Int, col: Int) -> Bool {
-        if row < min(startRow, endRow) || row > max(startRow, endRow) {
-            return false
-        }
-
-        if startRow == endRow {
-            return col >= min(startCol, endCol) && col <= max(startCol, endCol)
-        }
-
-        if row == startRow {
-            return col >= startCol
-        }
-
-        if row == endRow {
-            return col <= endCol
-        }
-
+extension TerminalTextView: UIGestureRecognizerDelegate {
+    // Allow our tap gesture to work alongside the text view's built-in gestures
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
         return true
     }
-}
 
-struct TerminalLineView: View {
-    let line: TerminalLine
-    let lineIndex: Int
-    let theme: TerminalTheme
-    let font: TerminalFont
-    let cursorCol: Int?
-    let selection: TerminalSelection?
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(Array(line.cells.enumerated()), id: \.offset) { colIndex, cell in
-                CellView(
-                    cell: cell,
-                    theme: theme,
-                    font: font,
-                    isCursor: cursorCol == colIndex,
-                    isSelected: selection?.contains(row: lineIndex, col: colIndex) ?? false
-                )
-            }
+    // Don't let our tap gesture block the long press for selection
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // If it's a long press, let it take priority
+        if otherGestureRecognizer is UILongPressGestureRecognizer {
+            return true
         }
-        .frame(height: font.uiFont.lineHeight)
-    }
-}
-
-struct CellView: View {
-    let cell: TerminalCell
-    let theme: TerminalTheme
-    let font: TerminalFont
-    let isCursor: Bool
-    let isSelected: Bool
-
-    var body: some View {
-        Text(String(cell.character))
-            .font(font.font)
-            .foregroundColor(foregroundColor)
-            .frame(width: font.characterWidth)
-            .background(backgroundColor)
-            .overlay {
-                if isCursor {
-                    Rectangle()
-                        .fill(theme.cursor.color.opacity(0.7))
-                }
-            }
-    }
-
-    private var foregroundColor: Color {
-        if cell.attributes.contains(.inverse) {
-            return colorFromTerminalColor(cell.background, isBackground: true)
-        }
-        return colorFromTerminalColor(cell.foreground, isBackground: false)
-    }
-
-    private var backgroundColor: Color {
-        if isSelected {
-            return theme.selection.color
-        }
-        if cell.attributes.contains(.inverse) {
-            return colorFromTerminalColor(cell.foreground, isBackground: false)
-        }
-        return colorFromTerminalColor(cell.background, isBackground: true)
-    }
-
-    private func colorFromTerminalColor(_ color: TerminalColor, isBackground: Bool) -> Color {
-        switch color {
-        case .default:
-            return isBackground ? theme.swiftUIBackground : theme.swiftUIForeground
-        case .indexed(let index):
-            return theme.colorForIndex(index)
-        case .rgb(let r, let g, let b):
-            return Color(red: Double(r) / 255, green: Double(g) / 255, blue: Double(b) / 255)
-        }
-    }
-}
-
-// MARK: - Preference Keys
-
-struct ContentSizeKey: PreferenceKey {
-    static var defaultValue: CGSize = .zero
-
-    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
-        value = nextValue()
+        return false
     }
 }
 

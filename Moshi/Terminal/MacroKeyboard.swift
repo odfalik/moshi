@@ -89,9 +89,25 @@ struct MacroKeyboard: View {
                     CompactKey(label: "esc") { sendKey(.escape) }
                     CompactKey(label: "tab") { sendKey(.tab) }
 
+                    // Paste button
+                    Button {
+                        if let text = UIPasteboard.general.string {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            session.sendInput(text)
+                        }
+                    } label: {
+                        Image(systemName: "doc.on.clipboard")
+                            .font(.system(size: 12))
+                            .foregroundColor(.primary)
+                            .frame(width: 28, height: 28)
+                            .background(Color(.systemGray4))
+                            .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+
                     Divider().frame(height: 20)
 
-                    // Arrows
+                    // Arrows with key repeat
                     CompactArrow(icon: "chevron.left") { sendArrow("D") }
                     VStack(spacing: 0) {
                         CompactArrow(icon: "chevron.up") { sendArrow("A") }
@@ -177,7 +193,17 @@ struct MacroKeyboard: View {
             session.sendCommand(command)
 
         case .specialKey(let key):
-            session.sendSpecialKey(key)
+            // Handle modifier keys with special keys
+            if key == .enter && modifiers.shift {
+                session.sendInput("\n")
+                modifiers.reset()
+            } else if key == .tab && modifiers.shift {
+                session.sendInput("\u{1B}[Z")  // Shift+Tab (backtab)
+                modifiers.reset()
+            } else {
+                session.sendSpecialKey(key)
+                modifiers.reset()
+            }
 
         case .composite(let actions):
             for action in actions {
@@ -232,6 +258,13 @@ struct MacroKeyboard: View {
             return
         }
 
+        // Handle Shift+Enter (send newline instead of carriage return)
+        if key == .enter && modifiers.shift {
+            session.sendInput("\n")
+            modifiers.reset()
+            return
+        }
+
         session.sendSpecialKey(key)
         modifiers.reset()
     }
@@ -279,22 +312,113 @@ struct CompactKey: View {
     }
 }
 
-// MARK: - Compact Arrow Button
+// MARK: - Compact Arrow Button with Key Repeat
 
 struct CompactArrow: View {
     let icon: String
     let action: () -> Void
 
+    @State private var isPressed = false
+    @State private var repeatTimer: Timer?
+
     var body: some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.primary)
-                .frame(width: 24, height: 14)
-                .background(Color(.systemGray4))
-                .cornerRadius(3)
+        Image(systemName: icon)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundColor(.primary)
+            .frame(width: 24, height: 14)
+            .background(isPressed ? Color(.systemGray3) : Color(.systemGray4))
+            .cornerRadius(3)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        if !isPressed {
+                            isPressed = true
+                            action()
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            startRepeat()
+                        }
+                    }
+                    .onEnded { _ in
+                        isPressed = false
+                        stopRepeat()
+                    }
+            )
+    }
+
+    private func startRepeat() {
+        // Initial delay before repeat starts
+        repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in
+            // Start fast repeat
+            repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
+                action()
+            }
         }
-        .buttonStyle(.plain)
+    }
+
+    private func stopRepeat() {
+        repeatTimer?.invalidate()
+        repeatTimer = nil
+    }
+}
+
+// MARK: - Repeating Key Button (for backspace, etc.)
+
+struct RepeatingKey: View {
+    let label: String
+    let icon: String?
+    let action: () -> Void
+
+    @State private var isPressed = false
+    @State private var repeatTimer: Timer?
+
+    init(label: String, icon: String? = nil, action: @escaping () -> Void) {
+        self.label = label
+        self.icon = icon
+        self.action = action
+    }
+
+    var body: some View {
+        HStack(spacing: 2) {
+            if let icon = icon {
+                Image(systemName: icon)
+                    .font(.system(size: 10))
+            }
+            Text(label)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+        }
+        .foregroundColor(.primary)
+        .frame(height: 28)
+        .padding(.horizontal, 6)
+        .background(isPressed ? Color(.systemGray3) : Color(.systemGray4))
+        .cornerRadius(6)
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    if !isPressed {
+                        isPressed = true
+                        action()
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        startRepeat()
+                    }
+                }
+                .onEnded { _ in
+                    isPressed = false
+                    stopRepeat()
+                }
+        )
+    }
+
+    private func startRepeat() {
+        repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in
+            repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
+                action()
+            }
+        }
+    }
+
+    private func stopRepeat() {
+        repeatTimer?.invalidate()
+        repeatTimer = nil
     }
 }
 
@@ -379,7 +503,7 @@ enum MacroAction {
 extension Macro {
     // Special Keys Row
     static let specialKeys: [Macro] = [
-        Macro(label: "ENTER", icon: "return", action: .sendText("\r"), color: .green, category: "special"),
+        Macro(label: "ENTER", icon: "return", action: .specialKey(.enter), color: .green, category: "special"),
         Macro(label: "ESC", icon: "escape", action: .specialKey(.escape), category: "special"),
         Macro(label: "TAB", icon: "arrow.right.to.line", action: .specialKey(.tab), category: "special"),
         Macro(label: "^C", icon: "xmark.circle", action: .specialKey(.ctrlC), color: .red, category: "special"),
@@ -448,6 +572,7 @@ extension Macro {
         // Session Management
         Macro(label: "claude", icon: "bubble.left.and.bubble.right", action: .sendCommand("claude"), color: .purple, category: "claude"),
         Macro(label: "claude -c", icon: "arrow.clockwise", action: .sendCommand("claude -c"), color: .purple, category: "claude"),
+        Macro(label: "S-ENT", icon: "return", action: .sendText("\n"), color: .blue, category: "claude"),
         Macro(label: "S-TAB", icon: "arrow.left.to.line", action: .sendText("\u{1B}[Z"), color: .blue, category: "claude"),
         Macro(label: "unlock", icon: "lock.open", action: .sendCommand("security unlock-keychain"), color: .orange, category: "claude"),
         Macro(label: "/login", icon: "person.badge.key", action: .sendCommand("/login"), color: .green, category: "claude"),

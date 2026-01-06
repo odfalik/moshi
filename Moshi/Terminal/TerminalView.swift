@@ -8,10 +8,9 @@ struct TerminalView: View {
     @StateObject private var emulator = TerminalEmulator()
     @StateObject private var keyboardObserver = KeyboardObserver()
     @State private var showingMacroKeyboard = true
-    @State private var showingTmuxBar = true
-    @State private var inputText = ""
+    @State private var showingTmuxBar = false  // Disabled - tmux windows managed via swipe gestures
     @State private var lastProcessedLength: Int = 0
-    @State private var terminalHeight: CGFloat = 0
+    @State private var lastOutputRevision: Int = 0
 
 
     var body: some View {
@@ -24,7 +23,7 @@ struct TerminalView: View {
                         TmuxStatusBar(session: session, tmuxSession: tmuxSession)
                     }
 
-                    // Terminal content - constrained to exact terminal height
+                    // Terminal content - fills available space
                     TerminalRenderer(
                         emulator: emulator,
                         theme: appSettings.currentTheme,
@@ -33,46 +32,52 @@ struct TerminalView: View {
                             NotificationCenter.default.post(name: .terminalFocusKeyboard, object: nil)
                         }
                     )
-                    .frame(height: terminalHeight > 0 ? terminalHeight : nil)
-                    .gesture(
-                        DragGesture()
-                            .onEnded { value in
-                                handleSwipe(value)
-                            }
-                    )
+                    .frame(maxHeight: .infinity)
 
-                    Spacer(minLength: 0)
-
-                    // Hidden text input for keyboard
+                    // Hidden input for keyboard
                     HiddenInput(
-                        text: $inputText,
                         onTextInput: { text in
-                            // Apply any active modifiers from the macro keyboard
-                            let modifiers = ModifierState.shared
-                            if modifiers.hasActiveModifier {
-                                session.sendInput(modifiers.applyToCharacter(text))
-                            } else {
-                                session.sendInput(text)
-                            }
+                            session.sendInput(text)
                         },
                         onSpecialKey: { key in
                             session.sendSpecialKey(key)
                         }
                     )
-                    .frame(height: 0)
+                    .frame(height: 1)  // Needs minimal height for keyboard
                 }
 
                 // Macro keyboard overlaid at bottom, positioned above iOS keyboard
                 if showingMacroKeyboard && keyboardObserver.isKeyboardVisible {
-                    MacroKeyboard(session: session)
-                        .environmentObject(appSettings)
-                        .padding(.bottom, keyboardObserver.keyboardHeight)
+                    VStack(spacing: 0) {
+                        Spacer()
+                        MacroKeyboard(session: session)
+                            .environmentObject(appSettings)
+                        // Fill the space behind the iOS keyboard with matching color
+                        Color(.systemGray6)
+                            .frame(height: keyboardObserver.keyboardHeight)
+                    }
+                    .ignoresSafeArea(.keyboard)
                 }
             }
             .ignoresSafeArea(.keyboard) // We handle keyboard positioning manually
             .background(appSettings.currentTheme.swiftUIBackground)
             .onChange(of: session.terminalOutput) { _, newOutput in
-                // Only process new content, not the entire buffer
+                // Check if output was replaced (not appended) - handle reconnect
+                let wasReplaced = session.outputRevision != lastOutputRevision
+                if wasReplaced {
+                    lastOutputRevision = session.outputRevision
+                    emulator.reset()
+                    lastProcessedLength = 0
+
+                    // Suppress rendering while tmux redraws (300ms)
+                    emulator.suppressRendering = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak emulator] in
+                        emulator?.suppressRendering = false
+                        emulator?.flushRender()
+                    }
+                }
+
+                // Process new content
                 if newOutput.count > lastProcessedLength {
                     let startIndex = newOutput.index(newOutput.startIndex, offsetBy: lastProcessedLength)
                     let newContent = String(newOutput[startIndex...])
@@ -81,6 +86,19 @@ struct TerminalView: View {
                 }
             }
             .onAppear {
+                // Check if outputRevision changed (handles reconnect case)
+                if session.outputRevision != lastOutputRevision {
+                    lastOutputRevision = session.outputRevision
+                    emulator.reset()
+                    lastProcessedLength = 0
+                }
+
+                // Process any existing terminal output immediately (for reconnects)
+                if !session.terminalOutput.isEmpty && lastProcessedLength == 0 {
+                    emulator.processOutput(session.terminalOutput)
+                    lastProcessedLength = session.terminalOutput.count
+                }
+
                 // Focus keyboard after a short delay to ensure view is ready
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     NotificationCenter.default.post(name: .terminalFocusKeyboard, object: nil)
@@ -203,24 +221,17 @@ struct TerminalView: View {
         let charWidth = appSettings.terminalFont.characterWidth
         let charHeight = appSettings.terminalFont.lineHeight
 
-        // Account for UI elements
-        let tmuxBarHeight: CGFloat = showingTmuxBar ? 30 : 0
-        // Only subtract macro keyboard height (72px) when keyboard is visible
-        // The iOS keyboard height is handled by ignoresSafeArea(.keyboard) + our overlay positioning
+        // Account for UI elements - macro keyboard is 72px when visible
         let overlayHeight: CGFloat = (showingMacroKeyboard && keyboardObserver.isKeyboardVisible) ? 72 : 0
 
-        let availableWidth = size.width - 8  // Small horizontal padding
-        let availableHeight = size.height - tmuxBarHeight - overlayHeight
+        let availableWidth = size.width
+        let availableHeight = size.height - overlayHeight
 
         let cols = max(20, Int(availableWidth / charWidth))
         let rows = max(5, Int(availableHeight / charHeight))
 
-        // Set exact terminal view height to match calculated rows
-        let newTerminalHeight = CGFloat(rows) * charHeight
+        Logger.terminal.debug("Terminal size: \(cols)x\(rows) geometry=\(size.height) available=\(availableHeight)")
 
-        Logger.terminal.debug("Terminal size: \(cols)x\(rows) geometry=\(size.height) available=\(availableHeight) termHeight=\(newTerminalHeight)")
-
-        terminalHeight = newTerminalHeight
         emulator.resize(cols: cols, rows: rows)
         session.resize(cols: cols, rows: rows)
     }
@@ -323,65 +334,45 @@ struct TmuxWindowTab: View {
 // MARK: - Hidden Input
 
 struct HiddenInput: UIViewRepresentable {
-    @Binding var text: String
     let onTextInput: (String) -> Void
     let onSpecialKey: (SpecialKey) -> Void
 
-    func makeUIView(context: Context) -> UITextField {
-        let textField = TerminalTextField()
-        textField.delegate = context.coordinator
-        textField.autocapitalizationType = .none
-        textField.autocorrectionType = .no
-        textField.spellCheckingType = .no
-        textField.smartQuotesType = .no
-        textField.smartDashesType = .no
-        textField.smartInsertDeleteType = .no
-        textField.keyboardType = .asciiCapable
-        textField.returnKeyType = .default
-
-        // Disable inline predictions (iOS 17+)
-        if #available(iOS 17.0, *) {
-            textField.inlinePredictionType = .no
-        }
-
-        // Disable the keyboard's input assistant (toolbar with globe, mic, emoji)
-        textField.inputAssistantItem.leadingBarButtonGroups = []
-        textField.inputAssistantItem.trailingBarButtonGroups = []
-
-        textField.onSpecialKey = onSpecialKey
-        textField.onTextInput = onTextInput
+    func makeUIView(context: Context) -> TerminalInputView {
+        let inputView = TerminalInputView(frame: .zero, textContainer: nil)
+        inputView.onSpecialKey = onSpecialKey
+        inputView.onTextInput = onTextInput
 
         // Store reference in coordinator for focus management
-        context.coordinator.textField = textField
+        context.coordinator.inputView = inputView
 
         // Listen for focus notifications
         context.coordinator.observeFocusNotification()
 
+        // Listen for paste notifications from terminal text view
+        context.coordinator.observePasteNotification()
+
         // Become first responder on next run loop to ensure view is in hierarchy
         DispatchQueue.main.async {
-            textField.becomeFirstResponder()
+            inputView.becomeFirstResponder()
         }
 
-        return textField
+        return inputView
     }
 
-    func updateUIView(_ uiView: UITextField, context: Context) {
-        uiView.text = text
-        // Update callbacks in case they changed
-        if let terminalField = uiView as? TerminalTextField {
-            terminalField.onSpecialKey = onSpecialKey
-            terminalField.onTextInput = onTextInput
-        }
+    func updateUIView(_ uiView: TerminalInputView, context: Context) {
+        uiView.onSpecialKey = onSpecialKey
+        uiView.onTextInput = onTextInput
     }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
 
-    class Coordinator: NSObject, UITextFieldDelegate {
+    class Coordinator: NSObject {
         let parent: HiddenInput
-        weak var textField: UITextField?
+        weak var inputView: TerminalInputView?
         private var focusObserver: NSObjectProtocol?
+        private var pasteObserver: NSObjectProtocol?
 
         init(_ parent: HiddenInput) {
             self.parent = parent
@@ -389,6 +380,9 @@ struct HiddenInput: UIViewRepresentable {
 
         deinit {
             if let observer = focusObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = pasteObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
         }
@@ -399,30 +393,123 @@ struct HiddenInput: UIViewRepresentable {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                self?.textField?.becomeFirstResponder()
+                self?.inputView?.becomeFirstResponder()
             }
         }
 
-        func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
-            if !string.isEmpty {
-                // Send the text directly instead of relying on binding update
-                parent.onTextInput(string)
-                return false
+        func observePasteNotification() {
+            pasteObserver = NotificationCenter.default.addObserver(
+                forName: .terminalPaste,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                if let text = notification.userInfo?["text"] as? String {
+                    self?.parent.onTextInput(text)
+                }
             }
-            return true
-        }
-
-        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-            // Enter key sends newline/carriage return
-            parent.onTextInput("\r")
-            return false
         }
     }
 }
 
-class TerminalTextField: UITextField {
+/// UITextView-based input that preserves iOS backspace key repeat
+class TerminalInputView: UITextView, UITextViewDelegate {
     var onSpecialKey: ((SpecialKey) -> Void)?
     var onTextInput: ((String) -> Void)?
+
+    private var previousLength = 0
+    private var isRefilling = false
+    private let bufferSize = 1000
+
+    override init(frame: CGRect, textContainer: NSTextContainer?) {
+        super.init(frame: frame, textContainer: textContainer)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    private func setup() {
+        delegate = self
+        autocorrectionType = .no
+        autocapitalizationType = .none
+        spellCheckingType = .no
+        smartQuotesType = .no
+        smartDashesType = .no
+        smartInsertDeleteType = .no
+        keyboardType = .asciiCapable
+        returnKeyType = .default
+
+        // Make text invisible but view functional
+        textColor = .clear
+        tintColor = .clear
+        backgroundColor = .clear
+
+        // Disable input assistant bar
+        inputAssistantItem.leadingBarButtonGroups = []
+        inputAssistantItem.trailingBarButtonGroups = []
+
+        if #available(iOS 17.0, *) {
+            inlinePredictionType = .no
+        }
+
+        refillBuffer()
+    }
+
+    private func refillBuffer() {
+        isRefilling = true
+        text = String(repeating: " ", count: bufferSize)
+        previousLength = bufferSize
+        selectedRange = NSRange(location: bufferSize, length: 0)
+        isRefilling = false
+    }
+
+    // MARK: - UITextViewDelegate
+
+    func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+        if text.isEmpty {
+            // Deletion - let iOS handle it naturally (preserves key repeat)
+            // We'll detect and handle it in textViewDidChange
+            return true
+        } else {
+            // Insertion - intercept and send to terminal
+            if text == "\n" {
+                onTextInput?("\r")
+            } else {
+                let modifiers = ModifierState.shared
+                if modifiers.hasActiveModifier {
+                    onTextInput?(modifiers.applyToCharacter(text))
+                } else {
+                    onTextInput?(text)
+                }
+            }
+            return false  // Don't add to text view
+        }
+    }
+
+    func textViewDidChange(_ textView: UITextView) {
+        guard !isRefilling else { return }
+
+        let newLength = textView.text?.count ?? 0
+
+        // Detect deletions and send backspaces
+        if newLength < previousLength {
+            let deleteCount = previousLength - newLength
+            for _ in 0..<deleteCount {
+                onTextInput?("\u{7F}")
+            }
+        }
+
+        previousLength = newLength
+
+        // Refill buffer when running low
+        if newLength < 100 {
+            refillBuffer()
+        }
+    }
+
+    // MARK: - Key Commands (hardware keyboard)
 
     override var keyCommands: [UIKeyCommand]? {
         var commands: [UIKeyCommand] = []
@@ -446,7 +533,7 @@ class TerminalTextField: UITextField {
             UIKeyCommand(input: UIKeyCommand.inputRightArrow, modifierFlags: [], action: #selector(handleArrowKey(_:))),
         ])
 
-        // Function keys
+        // Escape
         commands.append(UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(handleEscape)))
 
         return commands
@@ -462,8 +549,7 @@ class TerminalTextField: UITextField {
         case "z": onSpecialKey?(.ctrlZ)
         case "l": onSpecialKey?(.ctrlL)
         default:
-            // Send raw control character (Ctrl+A = 0x01, Ctrl+B = 0x02, etc.)
-            let controlCode = asciiValue - 96  // 'a' is 97, Ctrl+A is 1
+            let controlCode = asciiValue - 96
             let scalar = UnicodeScalar(controlCode)
             let controlChar = String(Character(scalar))
             onTextInput?(controlChar)
@@ -482,11 +568,6 @@ class TerminalTextField: UITextField {
 
     @objc private func handleEscape() {
         onSpecialKey?(.escape)
-    }
-
-    override func deleteBackward() {
-        // Send backspace character (0x7F) to the terminal instead of letting iOS handle it
-        onTextInput?("\u{7F}")
     }
 }
 

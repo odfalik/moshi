@@ -2,10 +2,22 @@ import Foundation
 import Combine
 
 final class TerminalEmulator: ObservableObject {
-    @Published var lines: [TerminalLine] = []
-    @Published var cursorRow: Int = 0  // Row within the visible screen (0 to rows-1)
-    @Published var cursorCol: Int = 0
-    @Published var scrollOffset: Int = 0
+    // Use manual change notification to batch updates
+    var lines: [TerminalLine] = []
+    var cursorRow: Int = 0  // Row within the visible screen (0 to rows-1)
+    var cursorCol: Int = 0
+    var scrollOffset: Int = 0
+
+    // Adaptive render throttling
+    private var lastRenderTime: CFAbsoluteTime = 0
+    private var renderWorkItem: DispatchWorkItem?
+    private var recentOutputBytes = 0
+    private var outputResetWorkItem: DispatchWorkItem?
+    private let fastOutputThreshold = 300  // bytes - above this, start throttling
+    private let heavyThrottleThreshold = 2000  // bytes - above this, throttle heavily
+
+    /// Suppress rendering briefly after reconnect
+    var suppressRendering = false
 
     private(set) var cols: Int = 80
     private(set) var rows: Int = 24
@@ -54,7 +66,7 @@ final class TerminalEmulator: ObservableObject {
 
     // Alternate screen buffer (for vim, less, etc.)
     private var alternateBuffer: [TerminalLine] = []
-    @Published private(set) var isAlternateScreen = false
+    private(set) var isAlternateScreen = false
 
     // Scroll region (1-indexed in ANSI, 0-indexed internally)
     // Default is entire screen (0 to rows-1)
@@ -130,6 +142,31 @@ final class TerminalEmulator: ObservableObject {
         scrollRegionBottom = rows - 1
     }
 
+    /// Reset the emulator to initial state (for reconnection)
+    func reset() {
+        lines = []
+        cursorRow = 0
+        cursorCol = 0
+        scrollOffset = 0
+        pendingWrap = false
+        currentAttributes = CellAttributes()
+        currentForeground = .default
+        currentBackground = .default
+        savedCursorRow = 0
+        savedCursorCol = 0
+        alternateBuffer = []
+        isAlternateScreen = false
+        scrollRegionTop = 0
+        scrollRegionBottom = rows - 1
+        parser.reset()
+        initializeBuffer()
+
+        // Cancel any pending render
+        renderWorkItem?.cancel()
+        renderWorkItem = nil
+        lastRenderTime = 0
+    }
+
     private func isLineEmpty(_ line: TerminalLine) -> Bool {
         line.cells.allSatisfy { $0.character == " " || $0.character == "\0" }
     }
@@ -153,6 +190,67 @@ final class TerminalEmulator: ObservableObject {
             case .controlChar(let char):
                 handleControlChar(char)
             }
+        }
+
+        // Track recent output for adaptive throttling
+        recentOutputBytes += output.count
+        outputResetWorkItem?.cancel()
+        let resetWork = DispatchWorkItem { [weak self] in
+            self?.recentOutputBytes = 0
+        }
+        outputResetWorkItem = resetWork
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: resetWork)
+
+        // Adaptive rendering
+        if suppressRendering {
+            return  // Don't render during reconnect settling
+        }
+        scheduleRender()
+    }
+
+    private func scheduleRender() {
+        // Cancel any pending render
+        renderWorkItem?.cancel()
+
+        let now = CFAbsoluteTimeGetCurrent()
+        let timeSinceLastRender = now - lastRenderTime
+
+        // Adaptive interval based on output volume
+        let minInterval: CFAbsoluteTime
+        if recentOutputBytes < fastOutputThreshold {
+            minInterval = 0.016  // 60fps for typing
+        } else if recentOutputBytes < heavyThrottleThreshold {
+            minInterval = 0.033  // 30fps for moderate output
+        } else {
+            minInterval = 0.05   // 20fps for fast output
+        }
+
+        if timeSinceLastRender >= minInterval {
+            // Render immediately
+            lastRenderTime = now
+            DispatchQueue.main.async { [weak self] in
+                self?.objectWillChange.send()
+            }
+        } else {
+            // Schedule for later - gets cancelled if more output arrives
+            let delay = minInterval - timeSinceLastRender
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self = self else { return }
+                self.lastRenderTime = CFAbsoluteTimeGetCurrent()
+                self.objectWillChange.send()
+            }
+            renderWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        }
+    }
+
+    /// Force an immediate render (for reconnect)
+    func flushRender() {
+        renderWorkItem?.cancel()
+        renderWorkItem = nil
+        lastRenderTime = CFAbsoluteTimeGetCurrent()
+        DispatchQueue.main.async { [weak self] in
+            self?.objectWillChange.send()
         }
     }
 

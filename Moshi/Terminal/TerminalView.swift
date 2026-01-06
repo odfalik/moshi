@@ -6,59 +6,71 @@ struct TerminalView: View {
     @EnvironmentObject var appSettings: AppSettings
 
     @StateObject private var emulator = TerminalEmulator()
+    @StateObject private var keyboardObserver = KeyboardObserver()
     @State private var showingMacroKeyboard = true
     @State private var showingTmuxBar = true
     @State private var inputText = ""
     @State private var lastProcessedLength: Int = 0
     @State private var terminalHeight: CGFloat = 0
 
+
     var body: some View {
         GeometryReader { geometry in
-            VStack(spacing: 0) {
-                // Tmux status bar
-                if showingTmuxBar, let tmuxSession = session.tmuxSession {
-                    TmuxStatusBar(session: session, tmuxSession: tmuxSession)
+            ZStack(alignment: .bottom) {
+                // Main content
+                VStack(spacing: 0) {
+                    // Tmux status bar
+                    if showingTmuxBar, let tmuxSession = session.tmuxSession {
+                        TmuxStatusBar(session: session, tmuxSession: tmuxSession)
+                    }
+
+                    // Terminal content - constrained to exact terminal height
+                    TerminalRenderer(
+                        emulator: emulator,
+                        theme: appSettings.currentTheme,
+                        font: appSettings.terminalFont,
+                        onTap: {
+                            NotificationCenter.default.post(name: .terminalFocusKeyboard, object: nil)
+                        }
+                    )
+                    .frame(height: terminalHeight > 0 ? terminalHeight : nil)
+                    .gesture(
+                        DragGesture()
+                            .onEnded { value in
+                                handleSwipe(value)
+                            }
+                    )
+
+                    Spacer(minLength: 0)
+
+                    // Hidden text input for keyboard
+                    HiddenInput(
+                        text: $inputText,
+                        onTextInput: { text in
+                            // Apply any active modifiers from the macro keyboard
+                            let modifiers = ModifierState.shared
+                            if modifiers.hasActiveModifier {
+                                session.sendInput(modifiers.applyToCharacter(text))
+                            } else {
+                                session.sendInput(text)
+                            }
+                        },
+                        onSpecialKey: { key in
+                            session.sendSpecialKey(key)
+                        }
+                    )
+                    .frame(height: 0)
                 }
 
-                // Terminal content - constrained to exact terminal height
-                TerminalRenderer(
-                    emulator: emulator,
-                    theme: appSettings.currentTheme,
-                    font: appSettings.terminalFont,
-                    onTap: {
-                        NotificationCenter.default.post(name: .terminalFocusKeyboard, object: nil)
-                    }
-                )
-                .frame(height: terminalHeight > 0 ? terminalHeight : nil)
-                .gesture(
-                    DragGesture()
-                        .onEnded { value in
-                            handleSwipe(value)
-                        }
-                )
-
-                Spacer(minLength: 0)
-
-                // Hidden text input for keyboard
-                HiddenInput(
-                    text: $inputText,
-                    onTextInput: { text in
-                        session.sendInput(text)
-                    },
-                    onSpecialKey: { key in
-                        session.sendSpecialKey(key)
-                    }
-                )
-                .frame(height: 0)
-
-                // Macro keyboard at bottom of content
-                if showingMacroKeyboard {
+                // Macro keyboard overlaid at bottom, positioned above iOS keyboard
+                if showingMacroKeyboard && keyboardObserver.isKeyboardVisible {
                     MacroKeyboard(session: session)
-                        .background(Color(.systemGray6))
+                        .environmentObject(appSettings)
+                        .padding(.bottom, keyboardObserver.keyboardHeight)
                 }
             }
+            .ignoresSafeArea(.keyboard) // We handle keyboard positioning manually
             .background(appSettings.currentTheme.swiftUIBackground)
-            .ignoresSafeArea(.keyboard, edges: .bottom)
             .onChange(of: session.terminalOutput) { _, newOutput in
                 // Only process new content, not the entire buffer
                 if newOutput.count > lastProcessedLength {
@@ -129,6 +141,13 @@ struct TerminalView: View {
 
             Button {
                 showingMacroKeyboard.toggle()
+                if !showingMacroKeyboard {
+                    // Dismiss iOS keyboard when hiding macro keyboard
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                } else {
+                    // Re-focus keyboard when showing macro keyboard
+                    NotificationCenter.default.post(name: .terminalFocusKeyboard, object: nil)
+                }
             } label: {
                 Image(systemName: showingMacroKeyboard ? "keyboard.fill" : "keyboard")
             }
@@ -179,11 +198,11 @@ struct TerminalView: View {
         let charHeight = appSettings.terminalFont.lineHeight
 
         // Account for UI elements within the VStack
+        // Note: Macro keyboard is now inputAccessoryView, handled by iOS keyboard system
         let tmuxBarHeight: CGFloat = showingTmuxBar ? 30 : 0
-        let macroKeyboardHeight: CGFloat = showingMacroKeyboard ? 76 : 0
 
         let availableWidth = size.width - 8  // Small horizontal padding
-        let availableHeight = size.height - tmuxBarHeight - macroKeyboardHeight
+        let availableHeight = size.height - tmuxBarHeight
 
         let cols = max(20, Int(availableWidth / charWidth))
         let rows = max(5, Int(availableHeight / charHeight))
@@ -311,10 +330,16 @@ struct HiddenInput: UIViewRepresentable {
         textField.smartInsertDeleteType = .no
         textField.keyboardType = .asciiCapable
         textField.returnKeyType = .default
+
         // Disable inline predictions (iOS 17+)
         if #available(iOS 17.0, *) {
             textField.inlinePredictionType = .no
         }
+
+        // Disable the keyboard's input assistant (toolbar with globe, mic, emoji)
+        textField.inputAssistantItem.leadingBarButtonGroups = []
+        textField.inputAssistantItem.trailingBarButtonGroups = []
+
         textField.onSpecialKey = onSpecialKey
         textField.onTextInput = onTextInput
 

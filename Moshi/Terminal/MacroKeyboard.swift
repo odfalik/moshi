@@ -1,14 +1,68 @@
 import SwiftUI
 
+// MARK: - Modifier State
+
+class ModifierState: ObservableObject {
+    static let shared = ModifierState()
+
+    @Published var ctrl = false
+    @Published var shift = false
+    @Published var alt = false
+
+    var hasActiveModifier: Bool {
+        ctrl || shift || alt
+    }
+
+    func reset() {
+        ctrl = false
+        shift = false
+        alt = false
+    }
+
+    /// Returns the CSI modifier parameter (1-based, bit-encoded)
+    /// Shift=1, Alt=2, Ctrl=4 -> parameter = 1 + sum of active bits
+    var modifierParam: Int {
+        var param = 0
+        if shift { param |= 1 }
+        if alt { param |= 2 }
+        if ctrl { param |= 4 }
+        return param + 1  // CSI uses 1-based encoding
+    }
+
+    /// Apply modifiers to a character and return the modified string
+    func applyToCharacter(_ char: String) -> String {
+        guard let firstChar = char.lowercased().first else { return char }
+
+        var result = char
+
+        if ctrl {
+            // Ctrl+letter sends control character (Ctrl+A = 0x01, Ctrl+C = 0x03, etc.)
+            if let ascii = firstChar.asciiValue, ascii >= 97 && ascii <= 122 {
+                let controlCode = ascii - 96  // 'a' is 97, Ctrl+A is 1
+                result = String(UnicodeScalar(controlCode))
+            }
+        } else if shift {
+            result = char.uppercased()
+        }
+
+        // Alt typically sends ESC prefix
+        if alt {
+            result = "\u{1B}" + result
+        }
+
+        reset()
+        return result
+    }
+}
+
 struct MacroKeyboard: View {
     @ObservedObject var session: Session
     @EnvironmentObject var appSettings: AppSettings
     @StateObject private var macroManager = MacroManager.shared
-    @ObservedObject private var dictationManager = DictationManager.shared
+    @ObservedObject private var modifiers = ModifierState.shared
 
     @State private var activeRow: MacroRow = .special
     @State private var showingMacroEditor = false
-    @State private var isRecordingDictation = false
 
     enum MacroRow: String, CaseIterable {
         case special = "Special"
@@ -21,9 +75,33 @@ struct MacroKeyboard: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Row selector
+            // Combined control + row selector bar
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
+                HStack(spacing: 6) {
+                    // Modifier toggles
+                    CompactModifier(label: "^", isActive: $modifiers.ctrl)
+                    CompactModifier(label: "⇧", isActive: $modifiers.shift)
+                    CompactModifier(label: "⌥", isActive: $modifiers.alt)
+
+                    Divider().frame(height: 20)
+
+                    // Quick keys
+                    CompactKey(label: "esc") { sendKey(.escape) }
+                    CompactKey(label: "tab") { sendKey(.tab) }
+
+                    Divider().frame(height: 20)
+
+                    // Arrows
+                    CompactArrow(icon: "chevron.left") { sendArrow("D") }
+                    VStack(spacing: 0) {
+                        CompactArrow(icon: "chevron.up") { sendArrow("A") }
+                        CompactArrow(icon: "chevron.down") { sendArrow("B") }
+                    }
+                    CompactArrow(icon: "chevron.right") { sendArrow("C") }
+
+                    Divider().frame(height: 20)
+
+                    // Row tabs
                     ForEach(MacroRow.allCases, id: \.self) { row in
                         RowTab(title: row.rawValue, isActive: activeRow == row) {
                             withAnimation(.easeInOut(duration: 0.15)) {
@@ -34,26 +112,19 @@ struct MacroKeyboard: View {
 
                     Spacer()
 
-                    // Dictation button
-                    Button {
-                        toggleDictation()
-                    } label: {
-                        Image(systemName: isRecordingDictation ? "mic.fill" : "mic")
-                            .foregroundColor(isRecordingDictation ? .red : .primary)
-                            .padding(.horizontal, 12)
-                    }
-
                     // Edit macros button
                     Button {
                         showingMacroEditor = true
                     } label: {
                         Image(systemName: "slider.horizontal.3")
-                            .padding(.horizontal, 8)
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
                     }
                 }
                 .padding(.horizontal, 8)
+                .padding(.vertical, 4)
             }
-            .frame(height: 32)
+            .frame(height: 36)
             .background(Color(.systemGray5))
 
             // Macro buttons
@@ -66,19 +137,13 @@ struct MacroKeyboard: View {
                     }
                 }
                 .padding(.horizontal, 8)
-                .padding(.vertical, 6)
+                .padding(.vertical, 4)
             }
-            .frame(height: 44)
+            .frame(height: 36)
             .background(Color(.systemGray6))
         }
         .sheet(isPresented: $showingMacroEditor) {
             MacroEditorView()
-        }
-        .onReceive(dictationManager.$transcribedText) { text in
-            if !text.isEmpty {
-                session.sendInput(text)
-                dictationManager.transcribedText = ""
-            }
         }
     }
 
@@ -142,14 +207,86 @@ struct MacroKeyboard: View {
         }
     }
 
-    private func toggleDictation() {
-        if isRecordingDictation {
-            dictationManager.stopRecording()
+    private func sendArrow(_ code: String) {
+        let impact = UIImpactFeedbackGenerator(style: .light)
+        impact.impactOccurred()
+
+        let sequence: String
+        if modifiers.hasActiveModifier {
+            sequence = "\u{1B}[1;\(modifiers.modifierParam)\(code)"
+            modifiers.reset()
         } else {
-            dictationManager.ensureAuthorized()
-            dictationManager.startRecording()
+            sequence = "\u{1B}[\(code)"
         }
-        isRecordingDictation.toggle()
+        session.sendInput(sequence)
+    }
+
+    private func sendKey(_ key: SpecialKey) {
+        let impact = UIImpactFeedbackGenerator(style: .light)
+        impact.impactOccurred()
+        session.sendSpecialKey(key)
+        modifiers.reset()
+    }
+}
+
+// MARK: - Compact Modifier Button
+
+struct CompactModifier: View {
+    let label: String
+    @Binding var isActive: Bool
+
+    var body: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            isActive.toggle()
+        } label: {
+            Text(label)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(isActive ? .white : .primary)
+                .frame(width: 28, height: 28)
+                .background(isActive ? Color.accentColor : Color(.systemGray4))
+                .cornerRadius(6)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Compact Key Button
+
+struct CompactKey: View {
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundColor(.primary)
+                .frame(height: 28)
+                .padding(.horizontal, 6)
+                .background(Color(.systemGray4))
+                .cornerRadius(6)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Compact Arrow Button
+
+struct CompactArrow: View {
+    let icon: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(.primary)
+                .frame(width: 24, height: 14)
+                .background(Color(.systemGray4))
+                .cornerRadius(3)
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -303,6 +440,7 @@ extension Macro {
         // Session Management
         Macro(label: "claude", icon: "bubble.left.and.bubble.right", action: .sendCommand("claude"), color: .purple, category: "claude"),
         Macro(label: "claude -c", icon: "arrow.clockwise", action: .sendCommand("claude -c"), color: .purple, category: "claude"),
+        Macro(label: "S-TAB", icon: "arrow.left.to.line", action: .sendText("\u{1B}[Z"), color: .blue, category: "claude"),
         Macro(label: "unlock", icon: "lock.open", action: .sendCommand("security unlock-keychain"), color: .orange, category: "claude"),
         Macro(label: "/login", icon: "person.badge.key", action: .sendCommand("/login"), color: .green, category: "claude"),
         Macro(label: "/exit", icon: "xmark.circle", action: .sendCommand("/exit"), category: "claude"),

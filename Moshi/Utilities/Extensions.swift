@@ -221,3 +221,72 @@ extension Publisher where Failure == Never {
         }
     }
 }
+
+// MARK: - Keyboard Observer
+
+/// Observable object that tracks keyboard visibility and height
+/// Used to position views directly above the keyboard without gaps
+final class KeyboardObserver: ObservableObject {
+    @Published var keyboardHeight: CGFloat = 0
+    @Published var isKeyboardVisible: Bool = false
+
+    private var cancellables = Set<AnyCancellable>()
+
+    init() {
+        // Keyboard will show
+        NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)
+            .compactMap { notification -> CGFloat? in
+                guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
+                    return nil
+                }
+                // Subtract safe area bottom since keyboard frame includes it
+                let safeAreaBottom = UIApplication.shared.connectedScenes
+                    .compactMap { $0 as? UIWindowScene }
+                    .flatMap { $0.windows }
+                    .first { $0.isKeyWindow }?
+                    .safeAreaInsets.bottom ?? 0
+                return frame.height - safeAreaBottom
+            }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] height in
+                self?.keyboardHeight = height
+                self?.isKeyboardVisible = true
+            }
+            .store(in: &cancellables)
+
+        // Keyboard will hide
+        NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.keyboardHeight = 0
+                self?.isKeyboardVisible = false
+            }
+            .store(in: &cancellables)
+
+        // Keyboard will change frame (handles size changes)
+        NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)
+            .compactMap { notification -> CGFloat? in
+                guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
+                    return nil
+                }
+                // Only return non-zero height if keyboard is on screen
+                let screenHeight = UIScreen.main.bounds.height
+                if frame.origin.y < screenHeight {
+                    // Subtract safe area bottom since keyboard frame includes it
+                    let safeAreaBottom = UIApplication.shared.connectedScenes
+                        .compactMap { $0 as? UIWindowScene }
+                        .flatMap { $0.windows }
+                        .first { $0.isKeyWindow }?
+                        .safeAreaInsets.bottom ?? 0
+                    return frame.height - safeAreaBottom
+                }
+                return 0
+            }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] height in
+                self?.keyboardHeight = height
+                self?.isKeyboardVisible = height > 0
+            }
+            .store(in: &cancellables)
+    }
+}
